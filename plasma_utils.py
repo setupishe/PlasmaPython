@@ -111,15 +111,23 @@ zerostep=False)-> None:
     zerostep: if True, calculates velocity on -tau/2 step
     """
     for i in range(particles.n_macro):
-        x = particles.x[i]
-        x_j = math.floor(x)
-        x_jplus1 = x_j + 1
-        E = (x_jplus1 - x)*nodes.E[x_j] + (x - x_j)*nodes.E[x_jplus1]
+        E = weight_field_value(particles.x[i], nodes.E)
         E = (particles.q*E*(tau**2))/(particles.m*h)
         if zerostep:
             particles.v[i] = particles.v[i] - E
         else:
             particles.v[i] = particles.v[i] + E
+
+def weight_field_value(x: float, value_field: np.array):
+    """
+    Gets field value for particle's position using first-order weighting
+    x: particle's position
+    value_field: nodes array of field values: rho, phi etc.
+    """
+    x_j = math.floor(x)
+    x_jplus1 = x_j + 1
+    res = (x_jplus1 - x)*value_field[x_j] + (x - x_j)*value_field[x_jplus1]
+    return res
 
 def move(particles: Particles, nodes: Nodes, mode = "default", consistency = False):
     '''
