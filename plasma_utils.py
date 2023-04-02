@@ -150,7 +150,7 @@ def move(particles: Particles, nodes: Nodes, mode = "default", consistency = Fal
             if particles.x[i] > l:
                 particles.x[i] = abs(particles.x[i]) % l
             elif particles.x[i] < 0:
-                particles.x[i] = -(particles.x[i]%l) + l
+                particles.x[i] = l-(-particles.x[i]%l)
         elif mode == "mirror":
             if particles.x[i] > l:
                 particles.x[i] = l - abs(particles.x[i]) % l
