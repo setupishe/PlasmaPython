@@ -126,7 +126,9 @@ def weight_field_value(x: float, value_field: np.array):
     """
     x_j = math.floor(x)
     x_jplus1 = x_j + 1
-    res = (x_jplus1 - x)*value_field[x_j] + (x - x_j)*value_field[x_jplus1]
+    left = (x_jplus1 - x)*value_field[x_j]
+    right = (x - x_j)*value_field[x_jplus1]
+    res = left + right
     return res
 
 def move(particles: Particles, nodes: Nodes, mode = "default", consistency = False):
@@ -136,8 +138,7 @@ def move(particles: Particles, nodes: Nodes, mode = "default", consistency = Fal
     args:
     particles: set of physical particles
     nodes: spatial grid of nodes
-    h: h: cell size
-    periodic: defines particle's behavoiur when exceeding the system's boundaries:
+    mode: defines particle's behavoiur when exceeding the system's boundaries:
     if True, particle appears on the on the other side, else disappears (!!Todo!!)
     consistency: if True, raises exception if Courant condition is violated
     '''
@@ -159,33 +160,30 @@ def move(particles: Particles, nodes: Nodes, mode = "default", consistency = Fal
         #todo: написать уничтожение частиц
 
 
-def getrho(nodes: Nodes, *particles_tpl, periodic = False):
+def get_rho(nodes: Nodes, particles, periodic = False):
     """
-    Obtains rho value in the nodes using 1-order wieghting
+    Obtains rho value in the nodes using 1-order weighting
     params: 
     nodes: spatial grid of nodes
     particles_tpl: set or tuple of sets of physical macroparticles
     periodic: defines boundary conditions
     """
-    nodes.rho *= 0 
-    for particles in particles_tpl:
-        for i in range(particles.n_macro):
-            x = particles.x[i]
-            x_j = math.floor(x)
-            x_jplus1 = x_j + 1
-            left = particles.concentration*particles.q*(x_jplus1 - x)
-            right = particles.concentration*particles.q*(x - x_j)
-            #print(left, right)
-            nodes.rho[x_j] += left
-            nodes.rho[x_jplus1] += right
-            if periodic:
-                if x_j == 0:
-                    nodes.rho[nodes.length-1] += left
-                if x_jplus1 == nodes.length-1:
-                    nodes.rho[0] += right
+    for i in range(particles.n_macro):
+        x = particles.x[i]
+        x_j = math.floor(x)
+        x_jplus1 = x_j + 1
+        left = particles.concentration*particles.q*(x_jplus1 - x)
+        right = particles.concentration*particles.q*(x - x_j)
+        nodes.rho[x_j] += left
+        nodes.rho[x_jplus1] += right
+        if periodic:
+            if x_j == 0:
+                nodes.rho[nodes.length-1] += left
+            if x_jplus1 == nodes.length-1:
+                nodes.rho[0] += right
 
 
-def set_homogeneous(particles: Particles, L: float):
+def set_homogeneous(particles: Particles, left: float, right: float):
     """ 
     Sets homogenous spatial distribution of particles
     params: 
@@ -194,7 +192,7 @@ def set_homogeneous(particles: Particles, L: float):
     N_p: total number of macroparticles
     """
     N_p = particles.n_macro
-    particles.x = np.linspace(0, L, N_p, endpoint=False) + L/N_p/2
+    particles.x = np.linspace(left, right, N_p, endpoint=False) + (right-left)/N_p/2
 
 def set_distr(particles: Particles, distribution: Distribution, min: float, max: float, n: int):
     """
@@ -239,4 +237,34 @@ def get_distr(particles: Particles, xmin: float, xmax: float):
     for i in range(particles.n_macro):
         if particles.x[i] >= xmin and particles.x[i] <= xmax:
             res.append(particles.v[i])
+    return res
+
+def calc_kinetic_energy(particles: Particles, h: float, tau: float):
+    """
+    calculates kinetic energy of all particles
+    args:
+    particles : sets of macroparticles
+    h: h: cell size
+    tau: time step
+    """
+    if particles.normalised:
+        particles.denormalise(h, tau)
+    res = np.sum(particles.v**2)*particles.m*particles.concentration/2
+    particles.normalise(h, tau)
+    return res
+
+def calc_electric_energy(particles: Particles, nodes: Nodes, h: float):
+    """
+    calculates electric energy of all particles
+    args:
+    particles : sets of macroparticles
+    h: h: cell size
+    tau: time step
+    """
+    res = 0
+    rho = particles.q*particles.concentration
+    for i in range(particles.n_macro):
+        x = particles.x[i]
+        phi = weight_field_value(x, nodes.phi)
+        res += rho*phi
     return res
