@@ -253,13 +253,12 @@ def calc_kinetic_energy(particles: Particles, h: float, tau: float):
     particles.normalise(h, tau)
     return res
 
-def calc_electric_energy(particles: Particles, nodes: Nodes, h: float):
+def calc_electric_energy(particles: Particles, nodes: Nodes):
     """
     calculates electric energy of all particles
     args:
     particles : sets of macroparticles
-    h: h: cell size
-    tau: time step
+    nodes: spatial grid of nodes
     """
     res = 0
     rho = particles.q*particles.concentration
@@ -268,3 +267,26 @@ def calc_electric_energy(particles: Particles, nodes: Nodes, h: float):
         phi = weight_field_value(x, nodes.phi)
         res += rho*phi
     return res
+
+
+def account_walls(nodes: Nodes, particles: Particles, left: Wall, right: Wall):
+    """
+    Process particles absorbtion into walls
+    args:
+    particles : sets of macroparticles
+    nodes: spatial grid of nodes
+    left: left wall
+    right: right wall
+    """
+    old_n = particles.n_macro
+    particles.v = particles.v[particles.x >= left.x].copy()
+    particles.x = particles.x[particles.x >= left.x].copy()
+    particles.n_macro = len(particles.x)
+    left.number += old_n - particles.n_macro
+    old_n = particles.n_macro
+    particles.v = particles.v[particles.x <= right.x].copy()
+    particles.x = particles.x[particles.x <= right.x].copy()
+    particles.n_macro = len(particles.x)
+    right.number += old_n - particles.n_macro
+    nodes.rho[round(left.x)] += left.number*particles.q
+    nodes.rho[round(right.x)] += right.number*particles.q

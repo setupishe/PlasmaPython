@@ -86,3 +86,11 @@ class Maxwell(Distribution):
 
     def distr(self, x: float):
         return math.exp(self.alpha*x**2)
+    
+class Wall:
+    """
+    System's wall, can absorb particles and it's charges
+    """
+    def __init__(self, x: float, number: int):
+        self.x = x
+        self.number = number
