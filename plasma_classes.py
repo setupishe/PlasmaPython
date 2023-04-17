@@ -39,6 +39,18 @@ class Particles():
             self.normalised = False
         else:
             print("Particles are already denormalized")
+    def __add__(self, other):
+        if self.concentration != other.concentration:
+            raise ValueError("Cannot add two sets of particles with different concentrations")
+        if self.q != other.q:
+            raise ValueError("Cannot add two sets of particles with different charge values")
+        if self.m != other.m:
+            raise ValueError("Cannot add two sets of particles with different mass values")
+
+        new_particles = Particles(self.n_macro + other.n_macro, self.concentration, self.q, self.m)
+        new_particles.x = np.concatenate((self.x, other.x))
+        new_particles.v = np.concatenate((self.v, other.v))
+        return new_particles
         
 
 class Nodes():
@@ -91,6 +103,10 @@ class Wall:
     """
     System's wall, can absorb particles and it's charges
     """
-    def __init__(self, x: float, number: int):
-        self.x = x
+    def __init__(self, left: float, right: float, number: int, h):
+        self.left = left/h
+        self.right = right/h
+        self.h = h
         self.number = number
+        self.particles_lst = []
+    

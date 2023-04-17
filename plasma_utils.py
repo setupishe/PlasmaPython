@@ -269,7 +269,8 @@ def calc_electric_energy(particles: Particles, nodes: Nodes):
     return res
 
 
-def account_walls(nodes: Nodes, particles: Particles, left: Wall, right: Wall):
+def account_walls(particles: Particles, walls: list[Wall], 
+                  SEE=False):
     """
     Process particles absorbtion into walls
     args:
@@ -278,15 +279,15 @@ def account_walls(nodes: Nodes, particles: Particles, left: Wall, right: Wall):
     left: left wall
     right: right wall
     """
-    old_n = particles.n_macro
-    particles.v = particles.v[particles.x >= left.x].copy()
-    particles.x = particles.x[particles.x >= left.x].copy()
-    particles.n_macro = len(particles.x)
-    left.number += old_n - particles.n_macro
-    old_n = particles.n_macro
-    particles.v = particles.v[particles.x <= right.x].copy()
-    particles.x = particles.x[particles.x <= right.x].copy()
-    particles.n_macro = len(particles.x)
-    right.number += old_n - particles.n_macro
-    nodes.rho[round(left.x)] += left.number*particles.q
-    nodes.rho[round(right.x)] += right.number*particles.q
+    for wall in walls:
+        absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
+        params = (particles.concentration, particles.q, particles.m)
+
+        absorbed_particles = Particles(particles.n_macro, *params)
+        absorbed_particles.n_macro = np.sum(absorbed_mask)
+        absorbed_particles.x = np.random.uniform(wall.left+1/10, wall.right-1/10, absorbed_particles.n_macro)
+        wall.particles_lst.append(absorbed_particles)
+
+        particles.x = particles.x[~absorbed_mask].copy()
+        particles.v = particles.v[~absorbed_mask].copy()
+        particles.n_macro = len(particles.x)
