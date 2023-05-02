@@ -173,6 +173,9 @@ def get_rho(nodes: Nodes, particles, periodic = False):
     for i in range(particles.n_macro):
         x = particles.x[i]
         x_j = math.floor(x)
+        if x_j == 200:
+            print(particles.x[particles.x > 200])
+            print(particles.q)
         x_jplus1 = x_j + 1
         left = particles.concentration*particles.q*(x_jplus1 - x)
         right = particles.concentration*particles.q*(x - x_j)
@@ -225,7 +228,7 @@ def get_integral(distribution: Distribution, min: float, max: float, n: int, max
 
     return integral_dict
 
-def set_distr(particles: Particles, integral_dict, uploading=None):
+def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
     """
     sets macroparticles' velocities accortind to distribution function
     args:
@@ -236,26 +239,24 @@ def set_distr(particles: Particles, integral_dict, uploading=None):
     neutral_range: determine if particles should be modified within the range
     """
     
-    mask = np.ones(particles.n_macro).astype(bool)
-    if uploading is not None:
-        if particles.normalised:
-            particles.denormalise(uploading["h"], uploading["tau"])
-        center = (uploading["nodes"].length - 1)/2
-        mask = (particles.x < center + uploading["neutral_range"]) & (particles.x > center - uploading["neutral_range"])
+    mask = np.ones(particles.n_macro)
 
+    if n_range is not None:
+        mask = (particles.x > n_range[0]) & (particles.x < n_range[1])
+
+    particles.denormalise(h, tau)
+    
     probs_keys = list(integral_dict.keys())
     for i in range(particles.n_macro):
-        r = random.random()
-        ind = bisect.bisect_left(probs_keys, r)
-        if ind == len(probs_keys):
-            ind = -1
-        key = probs_keys[ind]
-        
         if mask[i]:
+            r = random.random()
+            ind = bisect.bisect_left(probs_keys, r)
+            if ind == len(probs_keys):
+                ind = -1
+            key = probs_keys[ind]
             particles.v[i] = integral_dict[key]
 
-    if uploading is not None:
-        particles.normalise(uploading["h"], uploading["tau"])
+    particles.normalise(h, tau)
 
 
 
@@ -302,95 +303,98 @@ def calc_electric_energy(particles: Particles, nodes: Nodes):
     return res
 
 
-def account_walls(particles: Particles, walls: list[Wall], SEE=None, Energy=None, nodes=None, neutral_range=None):
-    params = (particles.concentration, particles.q, particles.m)
-    if particles.q > 0 and (nodes is None or neutral_range is None):
-        raise ValueError("Error! Nodes and neutral range need to be provided for ion mode")
-    for wall in walls:
-        # Identifying the absorbed particles
-        absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
-        if Energy is not None:
-            electric = 0
-            kinetic = 0
-            summ = 0
-        SEE_success = False
+def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=None, injection=None):
+    for particles in particles_lst:
+        params = (particles.concentration, particles.q, particles.m)
+        for wall in walls:
+            # Identifying the absorbed particles
+            absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
+            if np.sum(absorbed_mask) == 0:
+                continue
+            freeze_coordinate = wall.right - wall.h/10 if wall.side == "left" else wall.left + wall.h/10
+            if Energy is not None:
+                electric = 0
+                kinetic = 0
+                summ = 0
+            SEE_success = False
 
-        if SEE is not None:
-            # Step 1: Discern particles capable of generating secondary electrons
-            particles.denormalise(SEE["h"], SEE["tau"])
-            energy = 0.5 * particles.m * particles.v ** 2
-            particles.normalise(SEE["h"], SEE["tau"])
-            emit_mask = energy > SEE["E1"]
-            absorbed_emit_mask = absorbed_mask & emit_mask
-            if np.sum(absorbed_emit_mask) > 0:
-                SEE_success = True
-                # Step 2: Calculate the secondary electron emission yield (σ)
-                sigma = ((energy[absorbed_emit_mask]) / SEE["E1"]) ** SEE["alpha"]
-                secondary_counts = np.floor(sigma).astype(int)
-                # Step 3: Adding generated electrons to the system and ions to the wall
-                probabilities = np.random.rand(len(sigma))
-                secondary_counts += (probabilities < (np.floor(sigma)-sigma+1)).astype(int)
-                total_secondary = np.sum(secondary_counts)
+            if SEE is not None and particles.q < 0:
+                # Step 1: Discern particles capable of generating secondary electrons
+                particles.denormalise(SEE["h"], SEE["tau"])
+                energy = 0.5 * particles.m * particles.v ** 2
+                particles.normalise(SEE["h"], SEE["tau"])
+                emit_mask = energy > SEE["E1"]
+                absorbed_emit_mask = absorbed_mask & emit_mask
+                if np.sum(absorbed_emit_mask) > 0:
+                    SEE_success = True
+                    # Step 2: Calculate the secondary electron emission yield (σ)
+                    sigma = ((energy[absorbed_emit_mask]) / SEE["E1"]) ** SEE["alpha"]
+                    secondary_counts = np.floor(sigma).astype(int)
+                    # Step 3: Adding generated electrons to the system and ions to the wall
+                    probabilities = np.random.rand(len(sigma))
+                    secondary_counts += (probabilities < (np.floor(sigma)-sigma+1)).astype(int)
+                    total_secondary = np.sum(secondary_counts)
 
-                new_electrons = Particles(total_secondary, *params)
-                new_coordinate = wall.right + 1 if wall.side == "left" else wall.left - 1
-                new_electrons.x = np.full(new_electrons.n_macro, new_coordinate)
-                new_electrons.v = -np.repeat(particles.v[absorbed_emit_mask], secondary_counts)
-                new_electrons.v *= np.random.rand(len(new_electrons.x))
-                new_electrons.normalised = True
+                    new_electrons = Particles(total_secondary, *params)
+                    new_coordinate = wall.right + 1 if wall.side == "left" else wall.left - 1
+                    new_electrons.x = np.full(new_electrons.n_macro, new_coordinate)
+                    new_electrons.normalised = True
+                    set_distr(new_electrons, SEE["see_integral"], SEE["h"], SEE["tau"])
+                    
+                    #print("emittion")
+                    # print(new_electrons.x)
+                    # print(new_electrons.v)
+
+                    positrons = Particles(total_secondary, *params)
+                    positrons.q *= -1
+        
+                    positrons.x = np.full(positrons.n_macro, freeze_coordinate)
+                    positrons.v = np.zeros(positrons.n_macro)
+
+                    wall.particles_lst.append(positrons)
+
+                    if Energy is not None:
+                        electric -= calc_electric_energy(new_electrons, Energy["nodes"])
+                        kinetic -= calc_kinetic_energy(new_electrons, Energy["h"], Energy["tau"])
+                        summ -= electric + kinetic
+
+            absorbed_particles = particles[absorbed_mask].deepcopy()
+            if Energy is not None:
+                        electric += calc_electric_energy(absorbed_particles, Energy["nodes"])
+                        kinetic += calc_kinetic_energy(absorbed_particles, Energy["h"], Energy["tau"])
+                        summ += electric + kinetic
+                        Energy["electric"].append(electric)
+                        Energy["kinetic"].append(kinetic)
+                        Energy["summ"].append(summ)
+
+            if particles.q < 0:
+                # Excluding absorbed particles from the original set
+                particles.delete(absorbed_mask)
+            else:
+                #setting random coordinate inside source region
+                center = (injection["nodes"].length - 1)/2
+                base = (injection["n_range"][1] - injection["n_range"][0])/2
+                shift = base*(2*np.random.rand(np.sum(absorbed_mask)) - 1)
+                #ions
+                particles.x[absorbed_mask] = shift + center
+                set_distr(particles, injection["i_integral"], injection["h"], injection["tau"], injection["n_range"])
+
+                #electrons
+                paired_electrons = particles[absorbed_mask].deepcopy()
+                paired_electrons.q *= -1
+                paired_electrons.m = injection["electrons"].m
+                set_distr(paired_electrons, injection["e_integral"], injection["h"], injection["tau"], injection["n_range"])
+
+                particles_lst[0] += paired_electrons
                 
-                # print("emitted: ")
-                # print(new_electrons.x)
-                # print(new_electrons.v)
 
-                quasi_ions = Particles(total_secondary, *params)
-                quasi_ions.q *= -1
-                freeze_coordinate = wall.right - wall.h/10 if wall.side == "left" else wall.left + wall.h/10
-                quasi_ions.x = np.full(quasi_ions.n_macro, freeze_coordinate)
-                quasi_ions.v = np.zeros(quasi_ions.n_macro)
-
-                wall.particles_lst.append(quasi_ions)
-
-                if Energy is not None:
-                    electric -= calc_electric_energy(new_electrons, nodes)
-                    kinetic -= calc_kinetic_energy(new_electrons, Energy["h"], Energy["tau"])
-                    summ -= electric + kinetic
-           
-        absorbed_particles = Particles(particles.n_macro, *params)
-        absorbed_particles.n_macro = np.sum(absorbed_mask)
-        absorbed_particles.x = particles.x[absorbed_mask].copy()
-        absorbed_particles.v = particles.v[absorbed_mask].copy()
-        absorbed_particles.normalised = True
-        if Energy is not None:
-                    electric += calc_electric_energy(absorbed_particles, nodes)
-                    kinetic += calc_kinetic_energy(absorbed_particles, Energy["h"], Energy["tau"])
-                    summ += electric + kinetic
-                    Energy["electric"].append(electric)
-                    Energy["kinetic"].append(kinetic)
-                    Energy["summ"].append(summ)
-        
-        freeze_coordinate = wall.right - wall.h/10 if wall.side == "left" else wall.left + wall.h/10
-        absorbed_particles.x = np.full(absorbed_particles.n_macro, freeze_coordinate)
-        absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
-        wall.particles_lst.append(absorbed_particles)
-
-        if particles.q < 0:
-            # Excluding absorbed particles from the original set
-            particles.x = particles.x[~absorbed_mask].copy()
-            particles.v = particles.v[~absorbed_mask].copy()
-            particles.n_macro = len(particles.x)
-        else:
             
-            particles.v[absorbed_mask] *= np.random.rand(absorbed_particles.n_macro)
-            center = (nodes.length - 1)/2
-            shift = 2*neutral_range*wall.h*(2*random.random() - 1)
-            particles.x[absorbed_mask] = center + shift
+            absorbed_particles.x = np.full(absorbed_particles.n_macro, freeze_coordinate)
+            absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
+            wall.particles_lst.append(absorbed_particles)
 
-
-        
-
-        if SEE_success:
-            particles += new_electrons
+            if SEE_success:
+                particles += new_electrons
 
 def central_difference(arr, dt):
     first_deriv = np.zeros_like(arr)

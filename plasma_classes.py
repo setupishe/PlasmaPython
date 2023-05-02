@@ -48,6 +48,8 @@ class Particles():
             raise ValueError("Cannot add two sets of particles with different charge values")
         if self.m != other.m:
             raise ValueError("Cannot add two sets of particles with different mass values")
+        if self.normalised != other.normalised:
+            raise ValueError("Cannot add two sets of particles with different normalised values")
 
         new_particles = Particles(self.n_macro + other.n_macro, self.concentration, self.q, self.m)
         new_particles.normalised = True
@@ -79,6 +81,19 @@ class Particles():
 
             new_particles.update_parent = update_parent
             return new_particles
+        
+        elif isinstance(idx, np.ndarray) and idx.dtype == bool and idx.shape == (self.n_macro,):
+            n_selected = np.sum(idx)
+            new_particles = Particles(n_selected, self.concentration, self.q, self.m)
+            new_particles.normalised = self.normalised
+            new_particles.x = self.x[idx]
+            new_particles.v = self.v[idx]
+            def update_parent():
+                self.x[idx] = new_particles.x
+                self.v[idx] = new_particles.v
+
+            new_particles.update_parent = update_parent
+            return new_particles
         else:
             raise TypeError("Invalid argument type")
         
@@ -93,6 +108,30 @@ class Particles():
             self.x[idx] = values[0]
             self.v[idx] = values[1]
         self.update_parent(start, stop)
+    
+    def deepcopy(self):
+        new_particles = Particles(self.n_macro, self.concentration, self.q, self.m)
+        new_particles.normalised = self.normalised
+        new_particles.x = np.copy(self.x)
+        new_particles.v = np.copy(self.v)
+        return new_particles
+    
+    def delete(self, idx):
+        """
+        Delete elements specified by the given index or boolean mask from the particles instance.
+        """
+        if isinstance(idx, (int, np.integer)):
+            self.x = np.delete(self.x, idx)
+            self.v = np.delete(self.v, idx)
+        elif isinstance(idx, slice):
+            self.x = np.delete(self.x, idx)
+            self.v = np.delete(self.v, idx)
+        elif isinstance(idx, np.ndarray) and idx.dtype == bool and idx.shape == (self.n_macro,):
+            self.x = self.x[~idx]
+            self.v = self.v[~idx]
+        else:
+            raise TypeError("Index must be an integer, slice, or boolean mask.")
+        self.n_macro = len(self.x)
 
         
         
@@ -153,8 +192,8 @@ class Wall:
     
     def __init__(self, left: float, right: float, number: int, h: float, 
                  side: str):
-        self.left = left/h
-        self.right = right/h
+        self.left = round(left/h)
+        self.right = round(right/h)
         self.h = h
         self.number = number
         self.particles_lst = []
