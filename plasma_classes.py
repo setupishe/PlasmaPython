@@ -148,6 +148,8 @@ class Nodes():
         self.E = np.zeros((n+1,), np.double)
         self.phi = np.zeros((n+1,), np.double)
         self.electricEnergy = np.zeros((n+1,), np.double)
+        self.conc_e = np.zeros((n+1,), np.double)
+        self.conc_i = np.zeros((n+1,), np.double)
         
 
 

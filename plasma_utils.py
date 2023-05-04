@@ -170,6 +170,9 @@ def get_rho(nodes: Nodes, particles, periodic = False):
     particles_tpl: set or tuple of sets of physical macroparticles
     periodic: defines boundary conditions
     """
+    zero = np.zeros((nodes.length), np.double)
+    
+    conc = zero
     for i in range(particles.n_macro):
         x = particles.x[i]
         x_j = math.floor(x)
@@ -177,15 +180,22 @@ def get_rho(nodes: Nodes, particles, periodic = False):
             print(particles.x[particles.x > 200])
             print(particles.q)
         x_jplus1 = x_j + 1
-        left = particles.concentration*particles.q*(x_jplus1 - x)
-        right = particles.concentration*particles.q*(x - x_j)
-        nodes.rho[x_j] += left
-        nodes.rho[x_jplus1] += right
+        left = particles.concentration*(x_jplus1 - x)
+        right = particles.concentration*(x - x_j)
+        conc[x_j] += left
+        conc[x_jplus1] += right
         if periodic:
             if x_j == 0:
-                nodes.rho[nodes.length-1] += left
+                conc[nodes.length-1] += left
             if x_jplus1 == nodes.length-1:
-                nodes.rho[0] += right
+                conc[0] += right
+    
+    if particles.q > 0:
+        nodes.conc_i = conc
+    else:
+        nodes.conc_e = conc
+
+    nodes.rho += conc*particles.q
 
 
 def set_homogeneous(particles: Particles, left: float, right: float):
@@ -283,7 +293,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
 
     particles.normalise(h, tau)
 
-def constant_flux(particles, N, integral, h, tau, n_range):
+def constant_flux(particles, N, n_range):
     """
     particles: sets of macroparticles
     inregral_dict: precalculated set of velocities
@@ -298,17 +308,17 @@ def constant_flux(particles, N, integral, h, tau, n_range):
                                 particles.q, particles.m)
         new_particles.normalised = particles.normalised
         new_particles.x = range_coordinates(n_range, mask)[:new_particles.n_macro]
-        set_distr(new_particles, integral, h, tau)
+        new_particles.v = np.random.choice(slc.v, new_particles.n_macro)
         particles.add(new_particles)
 
-def get_distr(particles: Particles, xmin: float, xmax: float):
+def get_distr(particles: Particles, n_range):
     """ 
     obtain velocity distribution in chosen range
     args:
     particles: set of macroparticles
     xmin, xmax: spatial range for probing
     """
-    mask = range_mask(particles, (xmin, xmax))
+    mask = range_mask(particles, n_range)
     return particles[mask].v.copy()
 
 def calc_kinetic_energy(particles: Particles, h: float, tau: float):
@@ -349,7 +359,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
             absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
             if np.sum(absorbed_mask) == 0:
                 continue
-            freeze_coordinate = wall.right - wall.h/10 if wall.side == "left" else wall.left + wall.h/10
+            freeze_coordinate = wall.right if wall.side == "left" else wall.left
             if Energy is not None:
                 electric = 0
                 kinetic = 0
