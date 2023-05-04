@@ -228,6 +228,32 @@ def get_integral(distribution: Distribution, min: float, max: float, n: int, max
 
     return integral_dict
 
+def range_mask(particles, n_range, nodes=None):
+    """
+    generates boolean mask and random coordinates for particles in range
+    args:
+    particles : sets of macroparticles
+    n_range = neutral range
+    nodes: spatial grid of nodes
+    """
+
+    mask = (particles.x >= n_range[0]) & (particles.x <= n_range[1])
+    return mask
+
+def range_coordinates(nodes, n_range, mask):
+    """
+    generates boolean mask and random coordinates for particles in range
+    args:
+    particles : sets of macroparticles
+    n_range = neutral range
+    nodes: spatial grid of nodes
+    """
+    center = (nodes.length - 1)/2
+    base = (n_range[1] - n_range[0])/2
+    shift = base*(2*np.random.rand(np.sum(mask)) - 1)
+    coordinates = center + shift
+    return coordinates
+
 def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
     """
     sets macroparticles' velocities accortind to distribution function
@@ -242,7 +268,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
     mask = np.ones(particles.n_macro)
 
     if n_range is not None:
-        mask = (particles.x > n_range[0]) & (particles.x < n_range[1])
+        mask = range_mask(particles, n_range)
 
     particles.denormalise(h, tau)
     
@@ -367,16 +393,9 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                         Energy["kinetic"].append(kinetic)
                         Energy["summ"].append(summ)
 
-            if particles.q < 0:
-                # Excluding absorbed particles from the original set
-                particles.delete(absorbed_mask)
-            else:
-                #setting random coordinate inside source region
-                center = (injection["nodes"].length - 1)/2
-                base = (injection["n_range"][1] - injection["n_range"][0])/2
-                shift = base*(2*np.random.rand(np.sum(absorbed_mask)) - 1)
-                #ions
-                particles.x[absorbed_mask] = shift + center
+            if injection is not None and particles.q > 0:
+            
+                particles.x[absorbed_mask] = range_coordinates(injection["nodes"], injection["n_range"], absorbed_mask)
                 set_distr(particles, injection["i_integral"], injection["h"], injection["tau"], injection["n_range"])
 
                 #electrons
@@ -385,16 +404,20 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                 paired_electrons.m = injection["electrons"].m
                 set_distr(paired_electrons, injection["e_integral"], injection["h"], injection["tau"], injection["n_range"])
 
-                particles_lst[0] += paired_electrons
-                
+                particles_lst[0].add(paired_electrons)
 
-            
+            else:
+                # Excluding absorbed particles from the original set
+                particles.delete(absorbed_mask)
+
+                
             absorbed_particles.x = np.full(absorbed_particles.n_macro, freeze_coordinate)
             absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
             wall.particles_lst.append(absorbed_particles)
 
             if SEE_success:
-                particles += new_electrons
+                particles.add(new_electrons)
+
 
 def central_difference(arr, dt):
     first_deriv = np.zeros_like(arr)

@@ -41,7 +41,7 @@ class Particles():
             self.normalised = False
         else:
             print("Particles are already denormalized")
-    def __add__(self, other):
+    def add(self, other):
         if self.concentration != other.concentration:
             raise ValueError("Cannot add two sets of particles with different concentrations")
         if self.q != other.q:
@@ -51,11 +51,9 @@ class Particles():
         if self.normalised != other.normalised:
             raise ValueError("Cannot add two sets of particles with different normalised values")
 
-        new_particles = Particles(self.n_macro + other.n_macro, self.concentration, self.q, self.m)
-        new_particles.normalised = True
-        new_particles.x = np.concatenate((self.x, other.x))
-        new_particles.v = np.concatenate((self.v, other.v))
-        return new_particles
+        self.n_macro = self.n_macro + other.n_macro
+        self.x = np.concatenate((self.x, other.x))
+        self.v = np.concatenate((self.v, other.v))
     
     def __getitem__(self, idx):
         if isinstance(idx, int):
