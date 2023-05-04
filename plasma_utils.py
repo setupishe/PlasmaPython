@@ -228,9 +228,9 @@ def get_integral(distribution: Distribution, min: float, max: float, n: int, max
 
     return integral_dict
 
-def range_mask(particles, n_range, nodes=None):
+def range_mask(particles, n_range):
     """
-    generates boolean mask and random coordinates for particles in range
+    generates boolean mask for particles in range
     args:
     particles : sets of macroparticles
     n_range = neutral range
@@ -240,15 +240,14 @@ def range_mask(particles, n_range, nodes=None):
     mask = (particles.x >= n_range[0]) & (particles.x <= n_range[1])
     return mask
 
-def range_coordinates(nodes, n_range, mask):
+def range_coordinates(n_range, mask):
     """
-    generates boolean mask and random coordinates for particles in range
+    generates random coordinates range
     args:
     particles : sets of macroparticles
     n_range = neutral range
-    nodes: spatial grid of nodes
     """
-    center = (nodes.length - 1)/2
+    center = (n_range[1] + n_range[0])/2
     base = (n_range[1] - n_range[0])/2
     shift = base*(2*np.random.rand(np.sum(mask)) - 1)
     coordinates = center + shift
@@ -258,11 +257,11 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
     """
     sets macroparticles' velocities accortind to distribution function
     args:
-    particles : sets of macroparticles
-    distribution: distribution function class (e.g. maxwell)
-    min, max: limits for v, should be >> V_t
-    n: number of integration fractions
-    neutral_range: determine if particles should be modified within the range
+    particles: sets of macroparticles
+    inregral_dict: precalculated set of velocities
+    h: spatial grid step
+    tau: time step
+    n_range: determine if particles should be modified within the range
     """
     
     mask = np.ones(particles.n_macro)
@@ -284,7 +283,23 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
 
     particles.normalise(h, tau)
 
-
+def constant_flux(particles, N, integral, h, tau, n_range):
+    """
+    particles: sets of macroparticles
+    inregral_dict: precalculated set of velocities
+    h: spatial grid step
+    tau: time step
+    n_range: determine if particles should be modified within the range
+    """
+    mask = range_mask(particles, n_range)
+    slc = particles[mask]
+    if slc.n_macro < N:
+        new_particles = Particles(N - slc.n_macro, particles.concentration,
+                                particles.q, particles.m)
+        new_particles.normalised = particles.normalised
+        new_particles.x = range_coordinates(n_range, mask)[:new_particles.n_macro]
+        set_distr(new_particles, integral, h, tau)
+        particles.add(new_particles)
 
 def get_distr(particles: Particles, xmin: float, xmax: float):
     """ 
@@ -293,11 +308,8 @@ def get_distr(particles: Particles, xmin: float, xmax: float):
     particles: set of macroparticles
     xmin, xmax: spatial range for probing
     """
-    res = []
-    for i in range(particles.n_macro):
-        if particles.x[i] >= xmin and particles.x[i] <= xmax:
-            res.append(particles.v[i])
-    return res
+    mask = range_mask(particles, (xmin, xmax))
+    return particles[mask].v.copy()
 
 def calc_kinetic_energy(particles: Particles, h: float, tau: float):
     """
@@ -395,7 +407,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
 
             if injection is not None and particles.q > 0:
             
-                particles.x[absorbed_mask] = range_coordinates(injection["nodes"], injection["n_range"], absorbed_mask)
+                particles.x[absorbed_mask] = range_coordinates(injection["n_range"], absorbed_mask)
                 set_distr(particles, injection["i_integral"], injection["h"], injection["tau"], injection["n_range"])
 
                 #electrons
