@@ -191,9 +191,9 @@ def get_rho(nodes: Nodes, particles, periodic = False):
                 conc[0] += right
     
     if particles.q > 0:
-        nodes.conc_i = conc
+        nodes.conc_i += conc
     else:
-        nodes.conc_e = conc
+        nodes.conc_e += conc
 
     nodes.rho += conc*particles.q
 
@@ -293,7 +293,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
 
     particles.normalise(h, tau)
 
-def constant_flux(particles, N, n_range):
+def constant_flux(particles_lst, nodes, constant_conc, n_range):
     """
     particles: sets of macroparticles
     inregral_dict: precalculated set of velocities
@@ -301,15 +301,25 @@ def constant_flux(particles, N, n_range):
     tau: time step
     n_range: determine if particles should be modified within the range
     """
-    mask = range_mask(particles, n_range)
-    slc = particles[mask]
-    if slc.n_macro < N:
-        new_particles = Particles(N - slc.n_macro, particles.concentration,
-                                particles.q, particles.m)
-        new_particles.normalised = particles.normalised
-        new_particles.x = range_coordinates(n_range, mask)[:new_particles.n_macro]
-        new_particles.v = np.random.choice(slc.v, new_particles.n_macro)
-        particles.add(new_particles)
+    conc = 0
+    nodes_mask = np.arange(n_range[0], n_range[1], 1)
+    conc += np.mean(nodes.conc_e[nodes_mask])
+    conc += np.mean(nodes.conc_i[nodes_mask])
+    delta = constant_conc - conc
+    n = int(delta/particles_lst[0].concentration/2)
+    if n > 0:
+        print("FLUX!!!", n)
+        for particles in particles_lst:
+            mask = range_mask(particles, n_range)
+            slc = particles[mask]
+
+            
+            new_particles = Particles(n, particles.concentration,
+                                    particles.q, particles.m)
+            new_particles.normalised = particles.normalised
+            new_particles.x = range_coordinates(n_range, mask)[:new_particles.n_macro]
+            new_particles.v = np.random.choice(slc.v, new_particles.n_macro)
+            particles.add(new_particles)
 
 def get_distr(particles: Particles, n_range):
     """ 
