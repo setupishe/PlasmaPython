@@ -65,7 +65,7 @@ def thomas_algorithm(A: np.array, d: np.array) -> np.array:
     return x
 
 
-def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False) -> None:
+def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None) -> None:
     """
     Calculates potential and field based on charge density using Thomas algorithm
     args:
@@ -74,7 +74,29 @@ def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False) -> None:
     eps: epsilon, permittivity
     periodic: defines boundary conditions
     """
-    if periodic:
+    if walls is not None:
+        left = right = 0
+        for wall in walls:
+            if wall.side == "left":
+                left = wall.right
+            else:
+                right = wall.left
+        
+        M = nodes.length - left - (nodes.length -1 - right)
+        system_matrix = np.zeros((M, 3))
+        system_matrix[0] = system_matrix[M-1] = [0, 1, 0]
+        system_matrix[1:M-1] = [1, -2, 1]
+
+        rho = nodes.rho[left:right+1]
+        rho[0] = np.mean(nodes.rho[:left + 1])
+        rho[-1] = np.mean(nodes.rho[right:])
+        rho *= -h**2/eps
+        res_phi = thomas_algorithm(system_matrix, rho)
+        nodes.phi *= 0
+        nodes.phi[left:right+1] = res_phi
+        
+
+    elif periodic:
         M = nodes.length
         system_matrix = np.zeros((M-2, 3))
 
@@ -176,14 +198,13 @@ def get_rho(nodes: Nodes, particles, periodic = False):
     for i in range(particles.n_macro):
         x = particles.x[i]
         x_j = math.floor(x)
-        if x_j == 200:
-            print(particles.x[particles.x > 200])
-            print(particles.q)
         x_jplus1 = x_j + 1
+
         left = particles.concentration*(x_jplus1 - x)
         right = particles.concentration*(x - x_j)
         conc[x_j] += left
         conc[x_jplus1] += right
+
         if periodic:
             if x_j == 0:
                 conc[nodes.length-1] += left
@@ -259,7 +280,7 @@ def range_coordinates(n_range, mask):
     """
     center = (n_range[1] + n_range[0])/2
     base = (n_range[1] - n_range[0])/2
-    shift = base*(2*np.random.rand(np.sum(mask)) - 1)
+    shift = base*(2*np.random.rand(int(np.sum(mask))) - 1)
     coordinates = center + shift
     return coordinates
 
@@ -289,6 +310,8 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
             if ind == len(probs_keys):
                 ind = -1
             key = probs_keys[ind]
+            sign = 1 if particles.v[i] >= 0 else -1
+            #particles.v[i] = abs(integral_dict[key])*sign
             particles.v[i] = integral_dict[key]
 
     particles.normalise(h, tau)
@@ -369,7 +392,6 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
             absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
             if np.sum(absorbed_mask) == 0:
                 continue
-            freeze_coordinate = wall.right if wall.side == "left" else wall.left
             if Energy is not None:
                 electric = 0
                 kinetic = 0
@@ -406,7 +428,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                     positrons = Particles(total_secondary, *params)
                     positrons.q *= -1
         
-                    positrons.x = np.full(positrons.n_macro, freeze_coordinate)
+                    positrons.x = range_coordinates((wall.left, wall.right), np.ones(total_secondary))
                     positrons.v = np.zeros(positrons.n_macro)
 
                     wall.particles_lst.append(positrons)
@@ -443,7 +465,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                 particles.delete(absorbed_mask)
 
                 
-            absorbed_particles.x = np.full(absorbed_particles.n_macro, freeze_coordinate)
+            absorbed_particles.x = range_coordinates((wall.left, wall.right), absorbed_mask)
             absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
             wall.particles_lst.append(absorbed_particles)
 
