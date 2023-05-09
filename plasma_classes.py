@@ -19,8 +19,8 @@ class Particles():
         '''
         self.n_macro = n_macro
         self.concentration = concentration
-        self.x = np.zeros((n_macro,), np.double)
-        self.v = np.zeros((n_macro,), np.double)
+        self.x = np.zeros(n_macro)
+        self.v = np.zeros(n_macro)
         self.m = m
         self.q = q
 
@@ -144,12 +144,12 @@ class Nodes():
     def __init__(self, n: int):
         self.length = n+1
 
-        self.rho = np.zeros((n+1,), np.double)
-        self.E = np.zeros((n+1,), np.double)
-        self.phi = np.zeros((n+1,), np.double)
-        self.electricEnergy = np.zeros((n+1,), np.double)
-        self.conc_e = np.zeros((n+1,), np.double)
-        self.conc_i = np.zeros((n+1,), np.double)
+        self.rho = np.zeros((self.length,))
+        self.E = np.zeros((self.length,))
+        self.phi = np.zeros((self.length,))
+        self.electricEnergy = np.zeros((self.length,))
+        self.conc_e = np.zeros((self.length,))
+        self.conc_i = np.zeros((self.length,))
         
 
 

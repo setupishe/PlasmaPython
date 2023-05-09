@@ -1,10 +1,10 @@
 import numpy as np
 from plasma_classes import *
 import math
-from typing import Callable
 import random
 import bisect
 import pickle
+import os
 
 def is_diagonally_dominant(x: np.array) -> bool:
     """
@@ -217,6 +217,37 @@ def get_rho(nodes: Nodes, particles, periodic = False):
         nodes.conc_e += conc
 
     nodes.rho += conc*particles.q
+
+def get_rho_opt(nodes: Nodes, particles, periodic=False):
+    """
+    Obtains rho value in the nodes using 1-order weighting
+    params:
+    nodes: spatial grid of nodes
+    particles_tpl: set or tuple of sets of physical macroparticles
+    periodic: defines boundary conditions
+    """
+    conc = np.zeros(nodes.length, dtype=np.double)
+
+    x_j = np.floor(particles.x).astype(int)
+    x_jplus1 = x_j + 1
+
+    left = particles.concentration * (x_jplus1 - particles.x)
+    right = particles.concentration * (particles.x - x_j)
+
+    np.add.at(conc, x_j, left)
+    np.add.at(conc, x_jplus1, right)
+
+    if periodic:
+        np.add.at(conc, np.where(x_j == 0)[0][-1], left[x_j == 0])
+        np.add.at(conc, np.where(x_jplus1 == nodes.length - 1)[0][0], right[x_jplus1 == nodes.length - 1])
+
+    if particles.q > 0:
+        nodes.conc_i += conc
+    else:
+        nodes.conc_e += conc
+
+    rho = conc * particles.q
+    np.copyto(nodes.rho, nodes.rho + rho, where=rho != 0)
 
 
 def set_homogeneous(particles: Particles, left: float, right: float):
@@ -511,4 +542,87 @@ def load_from_file(filename):
     obj = cls.__new__(cls)
     obj.__dict__.update(dict_data)
     return obj
+
+def save_system_state(iteration: int, nodes: Nodes, particles: Particles, walls: list[Wall], file_path: str):
+    """
+    Serialize the system's state and append it to a binary file.
+    
+    iteration: int - the current iteration of the simulation.
+    nodes: Nodes - the spatial grid of nodes in the system.
+    particles: Particles - the set of particles in the system.
+    walls: List[Wall] - the walls in the system.
+    file_path: str - the path to the binary file to write to.
+    """
+    # Serialize the system's state.
+    serialized_data = {
+        "iteration": iteration,
+        "nodes": nodes,
+        "particles": particles,
+        "walls": walls
+    }
+    serialized_bytes = pickle.dumps(serialized_data)
+
+    # Open the file in append and read mode.
+    with open(file_path, "ab+") as f:
+        # Move the file pointer to the end of the file.
+        f.seek(0, os.SEEK_END)
+
+        # Write a header containing the size of the serialized data.
+        size_bytes = len(serialized_bytes).to_bytes(4, byteorder="big")
+        f.write(size_bytes)
+
+        # Write the serialized data.
+        f.write(serialized_bytes)
+
+def load_system_state(file_path: str, iteration: int):
+    """
+    Load the system's state from a binary file at the specified iteration.
+
+    file_path: str - the path to the binary file to read from.
+    iteration: int - the iteration to load from the file.
+    Returns:
+        - The nodes object at the specified iteration.
+        - The particles object at the specified iteration.
+        - The walls object at the specified iteration.
+    """
+    # Open the file in read-only mode.
+    with open(file_path, "rb") as f:
+        # Compute the position in the file where the serialized data for the specified iteration begins.
+        header_size = 4  # The size of the header containing the size of the serialized data.
+        data_offset = 0
+        current_iteration = -1
+        print("----")
+        while current_iteration < iteration:
+            print(current_iteration)
+            # Move the file pointer to the beginning of the serialized data.
+            f.seek(data_offset, os.SEEK_SET)
+
+            # Read the size of the serialized data.
+            size_bytes = f.read(header_size)
+            if not size_bytes:
+                raise ValueError(f"No data for iteration {iteration} found in file {file_path}")
+            size = int.from_bytes(size_bytes, byteorder="big")
+
+            # Compute the position in the file where the next serialized data begins.
+            data_offset = f.tell() + size
+            if data_offset == header_size:
+                raise ValueError(f"No data for iteration {iteration} found in file {file_path}")
+
+            # Update the current iteration.
+            current_iteration += 1
+
+        # Move the file pointer back to the beginning of the serialized data for the specified iteration.
+        f.seek(data_offset - size - header_size, os.SEEK_SET)
+
+        # Read the size of the serialized data.
+        size_bytes = f.read(header_size)
+        size = int.from_bytes(size_bytes, byteorder="big")
+
+        # Read the serialized data.
+        serialized_bytes = f.read(size)
+        serialized_data = pickle.loads(serialized_bytes)
+
+    # Return the nodes, particles, and walls from the deserialized data.
+    return serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
+
 
