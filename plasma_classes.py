@@ -198,4 +198,5 @@ class Wall:
         self.number = number
         self.particles_lst = []
         self.side = side
+        self.charge = 0
     

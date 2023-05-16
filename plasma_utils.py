@@ -79,8 +79,10 @@ def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None
         for wall in walls:
             if wall.side == "left":
                 left = wall.right
+                left_charge = wall.charge
             else:
                 right = wall.left
+                right_charge = wall.charge
         
         M = nodes.length - left - (nodes.length -1 - right)
         system_matrix = np.zeros((M, 3))
@@ -88,8 +90,8 @@ def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None
         system_matrix[1:M-1] = [1, -2, 1]
 
         rho = nodes.rho[left:right+1]
-        rho[0] = np.mean(nodes.rho[:left + 1])
-        rho[-1] = np.mean(nodes.rho[right:])
+        rho[0] = left_charge
+        rho[-1] = right_charge
         rho *= -h**2/eps
         res_phi = thomas_algorithm(system_matrix, rho)
         nodes.phi *= 0
@@ -121,8 +123,20 @@ def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None
     for i in range(1, nodes.length-1):
         nodes.E[i] = -(nodes.phi[i+1]-nodes.phi[i-1])/(2*h)
 
-def accel(particles: Particles, nodes: Nodes, L: float, h: float, tau: float, 
-zerostep=False)-> None:
+def weight_field_value(x: np.array, value_field: np.array):
+    """
+    Gets field value for particle's position using first-order weighting
+    x: particle's position
+    value_field: nodes array of field values: rho, phi etc.
+    """
+    x_j = np.floor(x).astype(int)
+    x_jplus1 = x_j + 1
+    left = (x_jplus1 - x)*value_field[x_j]
+    right = (x - x_j)*value_field[x_jplus1]
+    res = left + right
+    return res
+
+def accel(particles: Particles, nodes: Nodes, A: float, zerostep=False)-> None:
     """ 
     Calculates velocities using weighting electric field and leapfrog method
     All calculations are performed using normalized values
@@ -134,28 +148,16 @@ zerostep=False)-> None:
     tau: time step
     zerostep: if True, calculates velocity on -tau/2 step
     """
-    for i in range(particles.n_macro):
-        E = weight_field_value(particles.x[i], nodes.E)
-        E = (particles.q*E*(tau**2))/(particles.m*h)
-        if zerostep:
-            particles.v[i] = particles.v[i] - E
-        else:
-            particles.v[i] = particles.v[i] + E
+    E = weight_field_value(particles.x, nodes.E)
+    E *= A
+    if zerostep:
+        particles.v -= E
+    else:
+        particles.v += E
 
-def weight_field_value(x: float, value_field: np.array):
-    """
-    Gets field value for particle's position using first-order weighting
-    x: particle's position
-    value_field: nodes array of field values: rho, phi etc.
-    """
-    x_j = math.floor(x)
-    x_jplus1 = x_j + 1
-    left = (x_jplus1 - x)*value_field[x_j]
-    right = (x - x_j)*value_field[x_jplus1]
-    res = left + right
-    return res
 
-def move(particles: Particles, nodes: Nodes, mode = "default", consistency = False):
+
+def move(particles: Particles, nodes: Nodes, mode="default", consistency=False):
     '''
     Moves particles using velocities obtained by leapfrog method in accel()
     All calculations are performed using normalized values
@@ -167,58 +169,25 @@ def move(particles: Particles, nodes: Nodes, mode = "default", consistency = Fal
     consistency: if True, raises exception if Courant condition is violated
     '''
     l = nodes.length - 1
-    for i in range(particles.n_macro):
-        if consistency and (particles.v[i] > 1):
-            raise Exception(f'Too fast! Particle number {i} has flown for more than one cell.')
-        particles.x[i] = particles.x[i] + particles.v[i]
-        if mode == "periodic":
-            if particles.x[i] > l:
-                particles.x[i] = abs(particles.x[i]) % l
-            elif particles.x[i] < 0:
-                particles.x[i] = l-(-particles.x[i]%l)
-        elif mode == "mirror":
-            if particles.x[i] > l:
-                particles.x[i] = l - abs(particles.x[i]) % l
-            elif particles.x[i] < 0:
-                particles.x[i] = abs(particles.x[i]%l)
-        #todo: написать уничтожение частиц
-
-
-def get_rho(nodes: Nodes, particles, periodic = False):
-    """
-    Obtains rho value in the nodes using 1-order weighting
-    params: 
-    nodes: spatial grid of nodes
-    particles_tpl: set or tuple of sets of physical macroparticles
-    periodic: defines boundary conditions
-    """
-    zero = np.zeros((nodes.length), np.double)
     
-    conc = zero
-    for i in range(particles.n_macro):
-        x = particles.x[i]
-        x_j = math.floor(x)
-        x_jplus1 = x_j + 1
-
-        left = particles.concentration*(x_jplus1 - x)
-        right = particles.concentration*(x - x_j)
-        conc[x_j] += left
-        conc[x_jplus1] += right
-
-        if periodic:
-            if x_j == 0:
-                conc[nodes.length-1] += left
-            if x_jplus1 == nodes.length-1:
-                conc[0] += right
+    # update particle positions
+    particles.x += particles.v
     
-    if particles.q > 0:
-        nodes.conc_i += conc
-    else:
-        nodes.conc_e += conc
+    # handle periodic/mirror boundary conditions
+    if mode == "periodic":
+        particles.x = np.where(particles.x > l, np.abs(particles.x) % l, particles.x)
+        particles.x = np.where(particles.x < 0, l - (-particles.x % l), particles.x)
+    elif mode == "mirror":
+        particles.x = np.where(particles.x > l, l - np.abs(particles.x) % l, particles.x)
+        particles.x = np.where(particles.x < 0, np.abs(particles.x % l), particles.x)
+    
+    # check for Courant condition violation
+    if consistency and np.any(particles.v > 1):
+        idx = np.argmax(particles.v > 1)
+        raise Exception(f'Too fast! Particle number {idx} has flown for more than one cell.')
 
-    nodes.rho += conc*particles.q
 
-def get_rho_opt(nodes: Nodes, particles, periodic=False):
+def get_rho(nodes: Nodes, particles, periodic=False):
     """
     Obtains rho value in the nodes using 1-order weighting
     params:
@@ -233,19 +202,18 @@ def get_rho_opt(nodes: Nodes, particles, periodic=False):
 
     left = particles.concentration * (x_jplus1 - particles.x)
     right = particles.concentration * (particles.x - x_j)
-
     np.add.at(conc, x_j, left)
     np.add.at(conc, x_jplus1, right)
-
+    #TODO: fix 
     if periodic:
-        np.add.at(conc, np.where(x_j == 0)[0][-1], left[x_j == 0])
-        np.add.at(conc, np.where(x_jplus1 == nodes.length - 1)[0][0], right[x_jplus1 == nodes.length - 1])
-
+        if np.any(x_j == 0):
+            conc[0] += np.sum(left[x_j == 0])
+        if np.any(x_jplus1 == nodes.length - 1):
+            conc[nodes.length - 1] += np.sum(right[x_jplus1 == nodes.length - 1])
     if particles.q > 0:
         nodes.conc_i += conc
     else:
         nodes.conc_e += conc
-
     rho = conc * particles.q
     np.copyto(nodes.rho, nodes.rho + rho, where=rho != 0)
 
@@ -347,7 +315,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
 
     particles.normalise(h, tau)
 
-def constant_flux(particles_lst, nodes, constant_conc, n_range):
+def pump_particles(particles_lst, constant_n, n_range, windows=1):
     """
     particles: sets of macroparticles
     inregral_dict: precalculated set of velocities
@@ -355,25 +323,39 @@ def constant_flux(particles_lst, nodes, constant_conc, n_range):
     tau: time step
     n_range: determine if particles should be modified within the range
     """
-    conc = 0
-    nodes_mask = np.arange(n_range[0], n_range[1], 1)
-    conc += np.mean(nodes.conc_e[nodes_mask])
-    conc += np.mean(nodes.conc_i[nodes_mask])
-    delta = constant_conc - conc
-    n = int(delta/particles_lst[0].concentration/2)
-    if n > 0:
-        print("FLUX!!!", n)
+    len_range = n_range[1] - n_range[0]
+    
+    if len_range % windows != 0:
+        raise ValueError("The length of the neutral area must be divisible by \
+                         the number of windows without a remainder")
+    window = len_range/windows
+    left = right = 0
+    for i in range(windows):
+        left = n_range[0] + window*i
+        right = left + window
+        window_range = (left, right)
+        N = 0
         for particles in particles_lst:
-            mask = range_mask(particles, n_range)
+            mask = range_mask(particles, window_range)
             slc = particles[mask]
+            N += slc.n_macro
+        delta = constant_n - N
+        n = delta//2
+        if n > 0:
+            print("FLUX!!!", n)
+            for particles in particles_lst:
+                mask = range_mask(particles, window_range)
+                slc = particles[mask]
 
-            
-            new_particles = Particles(n, particles.concentration,
-                                    particles.q, particles.m)
-            new_particles.normalised = particles.normalised
-            new_particles.x = range_coordinates(n_range, mask)[:new_particles.n_macro]
-            new_particles.v = np.random.choice(slc.v, new_particles.n_macro)
-            particles.add(new_particles)
+                
+                new_particles = Particles(n, particles.concentration,
+                                        particles.q, particles.m)
+                new_particles.normalised = particles.normalised
+                new_particles.x = range_coordinates(window_range, mask)[:new_particles.n_macro]
+                new_particles.v = np.random.choice(slc.v, new_particles.n_macro)
+                particles.add(new_particles)
+
+
 
 def get_distr(particles: Particles, n_range):
     """ 
@@ -456,13 +438,14 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                     # print(new_electrons.x)
                     # print(new_electrons.v)
 
-                    positrons = Particles(total_secondary, *params)
-                    positrons.q *= -1
+                    # positrons = Particles(total_secondary, *params)
+                    # positrons.q *= -1
         
-                    positrons.x = range_coordinates((wall.left, wall.right), np.ones(total_secondary))
-                    positrons.v = np.zeros(positrons.n_macro)
+                    # positrons.x = range_coordinates((wall.left, wall.right), np.ones(total_secondary))
+                    # positrons.v = np.zeros(positrons.n_macro)
 
-                    wall.particles_lst.append(positrons)
+                    # wall.particles_lst.append(positrons)
+                    wall.charge += abs(particles.q*total_secondary)*particles.concentration
 
                     if Energy is not None:
                         electric -= calc_electric_energy(new_electrons, Energy["nodes"])
@@ -471,12 +454,9 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
 
             absorbed_particles = particles[absorbed_mask].deepcopy()
             if Energy is not None:
-                        electric += calc_electric_energy(absorbed_particles, Energy["nodes"])
                         kinetic += calc_kinetic_energy(absorbed_particles, Energy["h"], Energy["tau"])
                         summ += electric + kinetic
                         Energy["electric"].append(electric)
-                        Energy["kinetic"].append(kinetic)
-                        Energy["summ"].append(summ)
 
             if injection is not None and particles.q > 0:
             
@@ -496,9 +476,10 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                 particles.delete(absorbed_mask)
 
                 
-            absorbed_particles.x = range_coordinates((wall.left, wall.right), absorbed_mask)
-            absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
-            wall.particles_lst.append(absorbed_particles)
+            # absorbed_particles.x = range_coordinates((wall.left, wall.right), absorbed_mask)
+            # absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
+            # wall.particles_lst.append(absorbed_particles)
+            wall.charge += particles.q*absorbed_particles.n_macro*particles.concentration
 
             if SEE_success:
                 particles.add(new_electrons)
@@ -593,7 +574,6 @@ def load_system_state(file_path: str, iteration: int):
         current_iteration = -1
         print("----")
         while current_iteration < iteration:
-            print(current_iteration)
             # Move the file pointer to the beginning of the serialized data.
             f.seek(data_offset, os.SEEK_SET)
 
@@ -626,3 +606,37 @@ def load_system_state(file_path: str, iteration: int):
     return serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
 
 
+def loop_over_states(file_path: str):
+    """
+    A generator that yields the system's state at each iteration from a binary file.
+
+    file_path: str - the path to the binary file to read from.
+    Yields:
+        - A tuple containing the nodes object, the particles object, and the walls object.
+    """
+    # Open the file in read-only mode.
+    with open(file_path, "rb") as f:
+        # Compute the position in the file where the serialized data begins.
+        header_size = 4  # The size of the header containing the size of the serialized data.
+        data_offset = 0
+
+        while True:
+            # Move the file pointer to the beginning of the serialized data.
+            f.seek(data_offset, os.SEEK_SET)
+
+            # Read the size of the serialized data.
+            size_bytes = f.read(header_size)
+            if not size_bytes:
+                # No more data in the file.
+                break
+            size = int.from_bytes(size_bytes, byteorder="big")
+
+            # Compute the position in the file where the next serialized data begins.
+            data_offset = f.tell() + size
+
+            # Read the serialized data.
+            serialized_bytes = f.read(size)
+            serialized_data = pickle.loads(serialized_bytes)
+
+            # Yield the iteration number, nodes, particles, and walls from the deserialized data.
+            yield serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
