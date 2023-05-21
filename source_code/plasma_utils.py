@@ -433,6 +433,11 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                     new_electrons.x = np.full(new_electrons.n_macro, new_coordinate)
                     new_electrons.normalised = True
                     set_distr(new_electrons, SEE["see_integral"], SEE["h"], SEE["tau"])
+
+                    if "secondary_electrons" not in SEE:
+                        SEE["secondary_electrons"] = new_electrons.deepcopy()
+                    else:
+                        SEE["secondary_electrons"].add(new_electrons.deepcopy())
                     
                     #print("emittion")
                     # print(new_electrons.x)
@@ -447,16 +452,14 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                     # wall.particles_lst.append(positrons)
                     wall.charge += abs(particles.q*total_secondary)*particles.concentration
 
-                    if Energy is not None:
-                        electric -= calc_electric_energy(new_electrons, Energy["nodes"])
-                        kinetic -= calc_kinetic_energy(new_electrons, Energy["h"], Energy["tau"])
-                        summ -= electric + kinetic
-
             absorbed_particles = particles[absorbed_mask].deepcopy()
-            if Energy is not None:
-                        kinetic += calc_kinetic_energy(absorbed_particles, Energy["h"], Energy["tau"])
-                        summ += electric + kinetic
-                        Energy["electric"].append(electric)
+
+            sort = "ions" if particles.q > 0 else "electrons"
+            name = "absorbed_" + sort
+            if name not in SEE:
+                SEE[name] = absorbed_particles
+            else:
+                SEE[name].add(absorbed_particles)
 
             if injection is not None and particles.q > 0:
             
@@ -474,7 +477,6 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
             else:
                 # Excluding absorbed particles from the original set
                 particles.delete(absorbed_mask)
-
                 
             # absorbed_particles.x = range_coordinates((wall.left, wall.right), absorbed_mask)
             # absorbed_particles.v = np.zeros(absorbed_particles.n_macro)
@@ -714,6 +716,7 @@ def prepare_system(params):
     electrons = Particles(N_p, n1, -q, m_e)
     nodes = Nodes(N_x)
 
+
     # Setting initial homogeneous distributions for electrons and ions
     set_homogeneous(electrons, left_wall.right*h, right_wall.left*h)
     set_homogeneous(ions, left_wall.right*h, right_wall.left*h)
@@ -755,7 +758,13 @@ def prepare_system(params):
     if os.path.isfile(filepath):
         os.remove(filepath)
 
-    see_dict = {"E1": E1, "alpha": alpha, "h": h, "tau": tau, "see_integral": see_integral}
+
+    see_dict = {"E1": E1, 
+                "alpha": alpha, 
+                "h": h, 
+                "tau": tau, 
+                "see_integral": see_integral
+    }
 
     calc_dict = {
     'time_iterations': numerical["time_iterations"],
