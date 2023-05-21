@@ -400,7 +400,7 @@ def calc_electric_energy(particles: Particles, nodes: Nodes):
     return res
 
 
-def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=None, injection=None):
+def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injection=None):
     for particles in particles_lst:
         params = (particles.concentration, particles.q, particles.m)
         for wall in walls:
@@ -408,10 +408,6 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
             absorbed_mask = (particles.x <= wall.right) & (particles.x >= wall.left)
             if np.sum(absorbed_mask) == 0:
                 continue
-            if Energy is not None:
-                electric = 0
-                kinetic = 0
-                summ = 0
             SEE_success = False
 
             if SEE is not None and particles.q < 0:
@@ -437,10 +433,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
                     new_electrons.normalised = True
                     set_distr(new_electrons, SEE["see_integral"], SEE["h"], SEE["tau"])
 
-                    if "secondary_electrons" not in SEE:
-                        SEE["secondary_electrons"] = new_electrons.deepcopy()
-                    else:
-                        SEE["secondary_electrons"].add(new_electrons.deepcopy())
+                    SEE["secondary_electrons"] = new_electrons.deepcopy()
                     
                     #print("emittion")
                     # print(new_electrons.x)
@@ -459,10 +452,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, Energy=
 
             sort = "ions" if particles.q > 0 else "electrons"
             name = "absorbed_" + sort
-            if name not in SEE:
-                SEE[name] = absorbed_particles
-            else:
-                SEE[name].add(absorbed_particles)
+            SEE[name] = absorbed_particles
 
             if injection is not None and particles.q > 0:
             
@@ -529,47 +519,46 @@ def load_from_file(filename):
     obj.__dict__.update(dict_data)
     return obj
 
-def save_system_state(iteration: int, nodes: Nodes, particles: Particles, walls: list[Wall], file_path: str):
+def save_system_state(iteration: int, nodes: Nodes, particles: Particles, walls: list[Wall], file_path: str, modes=('particles', 'nodes', 'walls')):
     """
     Serialize the system's state and append it to a binary file.
-    
+
     iteration: int - the current iteration of the simulation.
     nodes: Nodes - the spatial grid of nodes in the system.
     particles: Particles - the set of particles in the system.
     walls: List[Wall] - the walls in the system.
     file_path: str - the path to the binary file to write to.
+    modes: tuple - indicates which objects to save (default: ('particles', 'nodes', 'walls')).
     """
-    # Serialize the system's state.
-    serialized_data = {
-        "iteration": iteration,
-        "nodes": nodes,
-        "particles": particles,
-        "walls": walls
-    }
+    serialized_data = {"iteration": iteration}
+
+    if 'particles' in modes:
+        serialized_data['particles'] = particles
+    if 'nodes' in modes:
+        serialized_data['nodes'] = nodes
+    if 'walls' in modes:
+        serialized_data['walls'] = walls
+
     serialized_bytes = pickle.dumps(serialized_data)
 
-    # Open the file in append and read mode.
     with open(file_path, "ab+") as f:
-        # Move the file pointer to the end of the file.
         f.seek(0, os.SEEK_END)
-
-        # Write a header containing the size of the serialized data.
         size_bytes = len(serialized_bytes).to_bytes(4, byteorder="big")
         f.write(size_bytes)
-
-        # Write the serialized data.
         f.write(serialized_bytes)
 
-def load_system_state(file_path: str, iteration: int):
+
+def load_system_state(file_path: str, iteration: int, modes=('particles', 'nodes', 'walls')):
     """
     Load the system's state from a binary file at the specified iteration.
 
     file_path: str - the path to the binary file to read from.
     iteration: int - the iteration to load from the file.
+    modes: tuple - indicates which objects to load (default: ('particles', 'nodes', 'walls')).
     Returns:
-        - The nodes object at the specified iteration.
-        - The particles object at the specified iteration.
-        - The walls object at the specified iteration.
+        - The nodes object at the specified iteration (if 'nodes' in modes).
+        - The particles object at the specified iteration (if 'particles' in modes).
+        - The walls object at the specified iteration (if 'walls' in modes).
     """
     # Open the file in read-only mode.
     with open(file_path, "rb") as f:
@@ -607,17 +596,26 @@ def load_system_state(file_path: str, iteration: int):
         serialized_bytes = f.read(size)
         serialized_data = pickle.loads(serialized_bytes)
 
-    # Return the nodes, particles, and walls from the deserialized data.
-    return serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
+    result = [serialized_data["iteration"]]
+    if 'nodes' in modes:
+        result.append(serialized_data.get('nodes'))
+    if 'particles' in modes:
+        result.append(serialized_data.get('particles'))
+    if 'walls' in modes:
+        result.append(serialized_data.get('walls'))
+
+    return tuple(result)
 
 
-def loop_over_states(file_path: str):
+def loop_over_states(file_path: str, modes=('particles', 'nodes', 'walls')):
     """
     A generator that yields the system's state at each iteration from a binary file.
 
     file_path: str - the path to the binary file to read from.
+    modes: tuple - indicates which objects to yield (default: ('particles', 'nodes', 'walls')).
     Yields:
-        - A tuple containing the nodes object, the particles object, and the walls object.
+        - A tuple containing the nodes object (if 'nodes' in modes), the particles object (if 'particles' in modes),
+          and the walls object (if 'walls' in modes).
     """
     # Open the file in read-only mode.
     with open(file_path, "rb") as f:
@@ -643,8 +641,15 @@ def loop_over_states(file_path: str):
             serialized_bytes = f.read(size)
             serialized_data = pickle.loads(serialized_bytes)
 
-            # Yield the iteration number, nodes, particles, and walls from the deserialized data.
-            yield serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
+            result = [serialized_data["iteration"]]
+            if 'nodes' in modes:
+                result.append(serialized_data.get('nodes'))
+            if 'particles' in modes:
+                result.append(serialized_data.get('particles'))
+            if 'walls' in modes:
+                result.append(serialized_data.get('walls'))
+
+            yield tuple(result)
 
 def force_mkdir(dir):
     if os.path.exists(dir):
@@ -674,7 +679,7 @@ def prepare_system(params):
 
     q = constants['q']
     m_e = constants['m_e']
-    m_i = constants['m_i']
+    m_i = constants['m_i']*constants['atomic mass']
     epsilon = constants['epsilon']
 
     eV = constants['eV']
@@ -708,14 +713,18 @@ def prepare_system(params):
     tau_plasma = 1 / (math.sqrt(n0 * q * q / (m_e * epsilon)) / (2 * np.pi))
     oscill_factor = numerical["oscill_factor"]
     if tau_plasma * oscill_factor < tau:
+        print("adjusting tau to plasma oscillations")
         tau = tau_plasma * oscill_factor
+        print(f"new tau = {tau}")
 
     # Calculating the Courant time step size and adjusting if necessary
     tau_courant = numerical['courant_factor'] * h / v_t_e
     if tau_courant < tau:
+        print("adjusting tau to courant condition")
         tau = tau_courant
+        print(f"new tau = {tau}")
     
-    dir_name = f"logs/Te{T_e}Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
+    dir_name = f"logs/Te{T_e/eV}Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
     if modes['add_datetime']:
         now = datetime.now()
         formatted_now = now.strftime("%d_%m_%Y_%H_%M_%S")
@@ -812,10 +821,10 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
     pumping = calc_dict["modes"]['pumping']
     maxwellise = calc_dict["modes"]['maxwellise']
 
-    system_states = calc_dict["filenames"]['system_states']
-    secondary_electrons = calc_dict["filenames"]['secondary_electrons']
-    absorbed_electrons = calc_dict["filenames"]['absorbed_electrons']
-    absorbed_ions = calc_dict["filenames"]['absorbed_ions']
+    system_states_path = calc_dict["filenames"]['system_states']
+    secondary_electrons_path = calc_dict["filenames"]['secondary_electrons']
+    absorbed_electrons_path = calc_dict["filenames"]['absorbed_electrons']
+    absorbed_ions_path = calc_dict["filenames"]['absorbed_ions']
 
     n_range = calc_dict['n_range']
     A_e = calc_dict['A_e']
@@ -861,14 +870,17 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
 
         # Saving system state
         if saving and t % saving_period == 0:
-            save_system_state(t, nodes, (electrons, ions), walls, system_states)
+            save_system_state(t, nodes, (electrons, ions), walls, system_states_path)
 
-            if "secondary_electrons" in see_dict:
-                save_system_state(t, nodes, (see_dict["secondary_electrons"]), walls, secondary_electrons)
-            if "absorbed_electrons" in see_dict:
-                save_system_state(t, nodes, (see_dict["absorbed_electrons"]), walls, absorbed_electrons)
-            if "absorbed_ions" in see_dict:
-                save_system_state(t, nodes, (see_dict["absorbed_ions"]), walls, absorbed_ions)
+        if "secondary_electrons" in see_dict:
+            save_system_state(t, nodes, (see_dict["secondary_electrons"]), walls, secondary_electrons_path, modes=["particles"])
+            see_dict.pop("secondary_electrons")
+        if "absorbed_electrons" in see_dict:
+            save_system_state(t, nodes, (see_dict["absorbed_electrons"]), walls, absorbed_electrons_path, modes=["particles"])
+            see_dict.pop("absorbed_electrons")
+        if "absorbed_ions" in see_dict:
+            save_system_state(t, nodes, (see_dict["absorbed_ions"]), walls, absorbed_ions_path, modes=["particles"])
+            see_dict.pop("absorbed_ions")
 
         # Applying Maxwellian distribution
         if maxwellise and t % maxwellise_period == 0:
