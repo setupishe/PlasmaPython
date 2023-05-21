@@ -6,6 +6,9 @@ import bisect
 import pickle
 import os
 from tqdm import tqdm
+import shutil
+from datetime import datetime
+
 
 def is_diagonally_dominant(x: np.array) -> bool:
     """
@@ -643,6 +646,11 @@ def loop_over_states(file_path: str):
             # Yield the iteration number, nodes, particles, and walls from the deserialized data.
             yield serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
 
+def force_mkdir(dir):
+    if os.path.exists(dir):
+        shutil.rmtree(dir)
+    os.mkdir(dir)
+
 def prepare_system(params):
     constants = params['constants']
     numerical = params['numerical']
@@ -656,6 +664,7 @@ def prepare_system(params):
     N_p = numerical['N_p']
     h = L / N_x
     tau = numerical['tau']
+    n = numerical["time_iterations"]
 
     n0 = constants['n0']
     left_border =  geometry["left_border"]
@@ -705,7 +714,15 @@ def prepare_system(params):
     tau_courant = numerical['courant_factor'] * h / v_t_e
     if tau_courant < tau:
         tau = tau_courant
-
+    
+    dir_name = f"logs/Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
+    if modes['add_datetime']:
+        now = datetime.now()
+        formatted_now = now.strftime("%d_%m_%Y_%H_%M_%S")
+        dir_name += "_" + formatted_now
+    force_mkdir(dir_name)
+    for key in filenames:
+        filenames[key] = os.path.join(dir_name, filenames[key])
     # Creating left and right wall objects
     left_wall = Wall(0, L*left_border, 0, h, "left")
     right_wall = Wall(L*right_border, L, 0, h, "right")
@@ -754,9 +771,9 @@ def prepare_system(params):
         constant_n += slc.n_macro
 
     #deleting log file if exists
-    filepath = filenames["system_states"]
-    if os.path.isfile(filepath):
-        os.remove(filepath)
+    statespath = filenames["system_states"]
+    if os.path.isfile(statespath):
+        os.remove(statespath)
 
 
     see_dict = {"E1": E1, 
@@ -767,19 +784,15 @@ def prepare_system(params):
     }
 
     calc_dict = {
-    'time_iterations': numerical["time_iterations"],
-    'saving_period': periods["saving"],
-    'pumping_period': periods["pumping"],
-    'maxwellise_period': periods["maxwellise"],
+    'time_iterations': n,
+    "periods": periods,
+    "modes": modes,
     'n_range': geometry["neutral_range"],
     'A_e': A_e,
     'A_i': A_i,
     'see_dict': see_dict,
-    'filepath': filepath,
+    'filenames': filenames,
     'constant_n': constant_n,
-    'saving': modes["saving"],
-    'pumping': modes["pumping"],
-    'maxwellise': modes["maxwellise"],
     'h': h,
     'tau': tau,
     'epsilon': epsilon,
@@ -792,19 +805,25 @@ def prepare_system(params):
 
 def main_cycle(electrons, ions, nodes, walls, calc_dict):
     time_iterations = calc_dict['time_iterations']
-    saving_period = calc_dict['saving_period']
-    pumping_period = calc_dict['pumping_period']
-    maxwellise_period = calc_dict['maxwellise_period']
+    saving_period = calc_dict["periods"]['saving']
+    pumping_period = calc_dict["periods"]['pumping']
+    maxwellise_period = calc_dict["periods"]['maxwellise']
+    saving = calc_dict["modes"]['saving']
+    pumping = calc_dict["modes"]['pumping']
+    maxwellise = calc_dict["modes"]['maxwellise']
+
+    system_states = calc_dict["filenames"]['system_states']
+    secondary_electrons = calc_dict["filenames"]['secondary_electrons']
+    absorbed_electrons = calc_dict["filenames"]['absorbed_electrons']
+    absorbed_ions = calc_dict["filenames"]['absorbed_ions']
+
     n_range = calc_dict['n_range']
     A_e = calc_dict['A_e']
     A_i = calc_dict['A_i']
     see_dict = calc_dict['see_dict']
-    filepath = calc_dict['filepath']
+    
     constant_n = calc_dict['constant_n']
     see_dict = calc_dict['see_dict']
-    saving = calc_dict['saving']
-    pumping = calc_dict['pumping']
-    maxwellise = calc_dict['maxwellise']
     h = calc_dict['h']
     tau = calc_dict['tau']
     epsilon = calc_dict['epsilon']
@@ -842,7 +861,14 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
 
         # Saving system state
         if saving and t % saving_period == 0:
-            save_system_state(t, nodes, (electrons, ions), walls, filepath)
+            save_system_state(t, nodes, (electrons, ions), walls, system_states)
+
+            if "secondary_electrons" in see_dict:
+                save_system_state(t, nodes, (see_dict["secondary_electrons"]), walls, secondary_electrons)
+            if "absorbed_electrons" in see_dict:
+                save_system_state(t, nodes, (see_dict["absorbed_electrons"]), walls, absorbed_electrons)
+            if "absorbed_ions" in see_dict:
+                save_system_state(t, nodes, (see_dict["absorbed_ions"]), walls, absorbed_ions)
 
         # Applying Maxwellian distribution
         if maxwellise and t % maxwellise_period == 0:
