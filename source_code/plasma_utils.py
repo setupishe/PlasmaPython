@@ -715,7 +715,7 @@ def prepare_system(params):
     if tau_courant < tau:
         tau = tau_courant
     
-    dir_name = f"logs/Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
+    dir_name = f"logs/Te{T_e}Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
     if modes['add_datetime']:
         now = datetime.now()
         formatted_now = now.strftime("%d_%m_%Y_%H_%M_%S")
