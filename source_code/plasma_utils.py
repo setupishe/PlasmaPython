@@ -5,6 +5,7 @@ import random
 import bisect
 import pickle
 import os
+from tqdm import tqdm
 
 def is_diagonally_dominant(x: np.array) -> bool:
     """
@@ -342,7 +343,6 @@ def pump_particles(particles_lst, constant_n, n_range, windows=1):
         delta = constant_n - N
         n = delta//2
         if n > 0:
-            print("FLUX!!!", n)
             for particles in particles_lst:
                 mask = range_mask(particles, window_range)
                 slc = particles[mask]
@@ -640,3 +640,205 @@ def loop_over_states(file_path: str):
 
             # Yield the iteration number, nodes, particles, and walls from the deserialized data.
             yield serialized_data["nodes"], serialized_data["particles"], serialized_data["walls"]
+
+def prepare_system(params):
+    constants = params['constants']
+    numerical = params['numerical']
+    geometry = params['geometry']
+    periods = params['periods']
+    modes = params['modes']
+    filenames = params['filenames']
+
+    L = geometry['L']
+    N_x = numerical['N_x']
+    N_p = numerical['N_p']
+    h = L / N_x
+    tau = numerical['tau']
+
+    n0 = constants['n0']
+    left_border =  geometry["left_border"]
+    right_border =  geometry["right_border"]
+    factor = right_border - left_border
+    n1 = n0 * N_x * factor / N_p
+
+    q = constants['q']
+    m_e = constants['m_e']
+    m_i = constants['m_i']
+    epsilon = constants['epsilon']
+
+    eV = constants['eV']
+    T_e = constants['T_e']*eV
+    T_i = constants['T_i']
+    k_b = constants['k_b']
+
+    E1 = constants['E1']*q
+    alpha = constants['alpha']
+
+
+
+    # Calculating velocity parameters
+    v_t_e = math.sqrt(3 * k_b * T_e / m_e)     # Thermal velocity of electrons
+    vmin_e = -3 * v_t_e                        # Minimum electron velocity
+    vmax_e = 3 * v_t_e                         # Maximum electron velocity
+    v_t_i = math.sqrt(3 * k_b * T_i / m_i)     # Thermal velocity of ions
+    vmin_i = -3 * v_t_i                        # Minimum ion velocity
+    vmax_i = 3 * v_t_i                         # Maximum ion velocity
+
+    # Calculating the Debye length and adjusting grid spacing if necessary
+    r_d = math.sqrt(epsilon * k_b * T_e / (q * q * n0))
+    debye_factor = numerical["debye_factor"]
+    if r_d * debye_factor < h:
+        raise ValueError(f"Spatial step h larger then Debye radius:\n \
+                         h = {h}\n\
+                         r_d = {r_d}")
+        
+
+    # Calculating the plasma time step size and adjusting if necessary
+    tau_plasma = 1 / (math.sqrt(n0 * q * q / (m_e * epsilon)) / (2 * np.pi))
+    oscill_factor = numerical["oscill_factor"]
+    if tau_plasma * oscill_factor < tau:
+        tau = tau_plasma * oscill_factor
+
+    # Calculating the Courant time step size and adjusting if necessary
+    tau_courant = numerical['courant_factor'] * h / v_t_e
+    if tau_courant < tau:
+        tau = tau_courant
+
+    # Creating left and right wall objects
+    left_wall = Wall(0, L*left_border, 0, h, "left")
+    right_wall = Wall(L*right_border, L, 0, h, "right")
+    walls = (left_wall, right_wall)
+
+    # Creating particle objects for ions and electrons and nodes
+    ions = Particles(N_p, n1, q, m_i)
+    electrons = Particles(N_p, n1, -q, m_e)
+    nodes = Nodes(N_x)
+
+    # Setting initial homogeneous distributions for electrons and ions
+    set_homogeneous(electrons, left_wall.right*h, right_wall.left*h)
+    set_homogeneous(ions, left_wall.right*h, right_wall.left*h)
+
+    # Calculating acceleration constants for electrons and ions
+    A_e = (electrons.q*(tau**2))/(electrons.m*h)
+    A_i = (ions.q*(tau**2))/(ions.m*h)
+
+    # Calculating integrals for electron and ion distributions
+    integral_points = numerical["integral_points"]
+    e_integral = get_integral(Maxwell(T_e, k_b, m_e), vmin_e, vmax_e, integral_points)
+    i_integral = get_integral(Maxwell(T_i, k_b, m_i), vmin_i, vmax_i, integral_points)
+    see_integral = get_integral(Maxwell(1*eV, k_b, m_e), vmin_e, vmax_e, integral_points)
+
+    # Setting electron and ion distributions based on calculated integrals
+    set_distr(electrons, e_integral, h, tau)
+    set_distr(ions, i_integral, h, tau) 
+
+    # Calculating the charge density on the grid nodes
+    get_rho(nodes, electrons)
+    get_rho(nodes, ions)
+
+    # Calculating the electric potential and electric field on the grid nodes
+    calc_fields(nodes, h, epsilon, walls=walls)
+
+    # Accelerating electrons and ions based on the electric field
+    accel(electrons, nodes, A_e, zerostep=True)
+    accel(ions, nodes, A_i, zerostep=True)
+
+    #computing constant for pumping
+    constant_n = 0
+    for particles in (electrons, ions):
+        mask = range_mask(particles, (500, 550))
+        slc = particles[mask]
+        constant_n += slc.n_macro
+
+    #deleting log file if exists
+    filepath = filenames["system_states"]
+    if os.path.isfile(filepath):
+        os.remove(filepath)
+
+    see_dict = {"E1": E1, "alpha": alpha, "h": h, "tau": tau, "see_integral": see_integral}
+
+    calc_dict = {
+    'time_iterations': numerical["time_iterations"],
+    'saving_period': periods["saving"],
+    'pumping_period': periods["pumping"],
+    'maxwellise_period': periods["maxwellise"],
+    'n_range': geometry["neutral_range"],
+    'A_e': A_e,
+    'A_i': A_i,
+    'see_dict': see_dict,
+    'filepath': filepath,
+    'constant_n': constant_n,
+    'saving': modes["saving"],
+    'pumping': modes["pumping"],
+    'maxwellise': modes["maxwellise"],
+    'h': h,
+    'tau': tau,
+    'epsilon': epsilon,
+    'e_integral': e_integral,
+    "pumping_windows": numerical["pumping_windows"]
+    }
+    
+    # Return the required objects
+    return (electrons, ions), nodes, walls, calc_dict
+
+def main_cycle(electrons, ions, nodes, walls, calc_dict):
+    time_iterations = calc_dict['time_iterations']
+    saving_period = calc_dict['saving_period']
+    pumping_period = calc_dict['pumping_period']
+    maxwellise_period = calc_dict['maxwellise_period']
+    n_range = calc_dict['n_range']
+    A_e = calc_dict['A_e']
+    A_i = calc_dict['A_i']
+    see_dict = calc_dict['see_dict']
+    filepath = calc_dict['filepath']
+    constant_n = calc_dict['constant_n']
+    see_dict = calc_dict['see_dict']
+    saving = calc_dict['saving']
+    pumping = calc_dict['pumping']
+    maxwellise = calc_dict['maxwellise']
+    h = calc_dict['h']
+    tau = calc_dict['tau']
+    epsilon = calc_dict['epsilon']
+    e_integral = calc_dict['e_integral']
+    pumping_windows = calc_dict["pumping_windows"]
+
+    print(f"h = {h}, tau = {tau}")
+    print("Launching calculations...")
+    for t in tqdm(range(time_iterations)):
+        try:
+            move(electrons, nodes)
+            move(ions, nodes)
+        except Exception:
+            print("Number of iteration:", t)
+            break
+
+        # Resetting charge densities
+        nodes.rho *= 0
+        nodes.conc_i *= 0
+        nodes.conc_e *= 0
+
+        # Accounting for wall interactions
+        account_walls([electrons, ions], walls, SEE=see_dict)
+
+        # Calculating charge densities
+        get_rho(nodes, electrons)
+        get_rho(nodes, ions)
+
+        # Calculating electric fields and potentials
+        calc_fields(nodes, h, epsilon, walls=walls)
+
+        # Accelerating particles
+        accel(electrons, nodes, A_e)
+        accel(ions, nodes, A_i)
+
+        # Saving system state
+        if saving and t % saving_period == 0:
+            save_system_state(t, nodes, (electrons, ions), walls, filepath)
+
+        # Applying Maxwellian distribution
+        if maxwellise and t % maxwellise_period == 0:
+            set_distr(electrons, e_integral, h, tau, n_range)
+
+        # Pumping particles
+        if pumping and t % pumping_period == 0 and t != 0:
+            pump_particles((electrons, ions), constant_n, n_range, windows=pumping_windows)
