@@ -651,6 +651,33 @@ def loop_over_states(file_path: str, modes=('particles', 'nodes', 'walls')):
 
             yield tuple(result)
 
+def cut_states(file_path: str, iteration: int):
+    """
+    Cut the data after the specified iteration from a binary file.
+
+    file_path: str - the path to the binary file.
+    iteration: int - the iteration after which to cut the data.
+    """
+    # Open the file in read-write mode.
+    with open(file_path, "rb+") as f:
+        header_size = 4
+        data_offset = 0
+        current_iteration = -1
+        while current_iteration < iteration:
+            f.seek(data_offset, os.SEEK_SET)
+            size_bytes = f.read(header_size)
+            if not size_bytes:
+                break
+            size = int.from_bytes(size_bytes, byteorder="big")
+            data_offset = f.tell() + size
+            if data_offset == header_size:
+                break
+            current_iteration += 1
+
+        # Truncate the file at the position of the last complete data block.
+        if current_iteration >= iteration:
+            f.truncate(data_offset)
+
 def force_mkdir(dir):
     if os.path.exists(dir):
         shutil.rmtree(dir)
