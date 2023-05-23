@@ -372,7 +372,7 @@ def get_distr(particles: Particles, n_range):
 
 def calc_kinetic_energy(particles: Particles, h: float, tau: float):
     """
-    calculates kinetic energy of all particles
+    calculates sum kinetic energy of all particles
     args:
     particles : sets of macroparticles
     h: h: cell size
@@ -381,6 +381,20 @@ def calc_kinetic_energy(particles: Particles, h: float, tau: float):
     if particles.normalised:
         particles.denormalise(h, tau)
     res = np.sum(particles.v**2)*particles.m*particles.concentration/2
+    particles.normalise(h, tau)
+    return res
+
+def calc_impulse(particles: Particles, h: float, tau: float):
+    """
+    calculates sum impulse of particles
+    args:
+    particles : sets of macroparticles
+    h: h: cell size
+    tau: time step
+    """
+    if particles.normalised:
+        particles.denormalise(h, tau)
+    res = np.sum(particles.v)*particles.m*particles.concentration
     particles.normalise(h, tau)
     return res
 
@@ -697,6 +711,7 @@ def prepare_system(params):
     h = L / N_x
     tau = numerical['tau']
     n = numerical["time_iterations"]
+    pumping_windows = numerical["pumping_windows"]
 
     n0 = constants['n0']
     left_border =  geometry["left_border"]
@@ -742,6 +757,7 @@ def prepare_system(params):
     if tau_plasma * oscill_factor < tau:
         print("adjusting tau to plasma oscillations")
         tau = tau_plasma * oscill_factor
+        params["constants"]["tau"] = tau
         print(f"new tau = {tau}")
 
     # Calculating the Courant time step size and adjusting if necessary
@@ -749,6 +765,7 @@ def prepare_system(params):
     if tau_courant < tau:
         print("adjusting tau to courant condition")
         tau = tau_courant
+        params["constants"]["tau"] = tau
         print(f"new tau = {tau}")
     
     dir_name = f"logs/Te{T_e/eV}Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
@@ -802,10 +819,12 @@ def prepare_system(params):
     #computing constant for pumping
     constant_n = 0
     for particles in (electrons, ions):
-        mask = range_mask(particles, (500, 550))
+        w_left = int(N_x/2)
+        neutral_width = geometry["neutral_range"][1] - geometry["neutral_range"][0]
+        w_right = w_left + int(neutral_width/pumping_windows)
+        mask = range_mask(particles, (w_left, w_right))
         slc = particles[mask]
         constant_n += slc.n_macro
-
     #deleting log file if exists
     statespath = filenames["system_states"]
     if os.path.isfile(statespath):
@@ -835,6 +854,17 @@ def prepare_system(params):
     'e_integral': e_integral,
     "pumping_windows": numerical["pumping_windows"]
     }
+
+    # serialized_bytes = pickle.dumps(params)
+
+    # with open(os.path.join(dir_name, "params.bin"), "ab+") as f:
+    #     f.seek(0, os.SEEK_END)
+    #     size_bytes = len(serialized_bytes).to_bytes(4, byteorder="big")
+    #     f.write(size_bytes)
+        # f.write(serialized_bytes)
+
+    with open(os.path.join(dir_name, "params.bin"), 'ab+') as f:
+        pickle.dump(params, f)
     
     # Return the required objects
     return (electrons, ions), nodes, walls, calc_dict
