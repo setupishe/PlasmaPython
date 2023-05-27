@@ -341,6 +341,8 @@ def pump_particles(particles_lst, constant_n, n_range, windows=1):
         N = 0
         for particles in particles_lst:
             mask = range_mask(particles, window_range)
+            if np.sum(mask) == 0:
+                continue
             slc = particles[mask]
             N += slc.n_macro
         delta = constant_n - N
@@ -394,7 +396,7 @@ def calc_impulse(particles: Particles, h: float, tau: float):
     """
     if particles.normalised:
         particles.denormalise(h, tau)
-    res = np.sum(particles.v)*particles.m*particles.concentration
+    res = np.sum(np.abs(particles.v))*particles.m*particles.concentration
     particles.normalise(h, tau)
     return res
 
@@ -757,7 +759,7 @@ def prepare_system(params):
     if tau_plasma * oscill_factor < tau:
         print("adjusting tau to plasma oscillations")
         tau = tau_plasma * oscill_factor
-        params["constants"]["tau"] = tau
+        params["numerical"]["tau"] = tau
         print(f"new tau = {tau}")
 
     # Calculating the Courant time step size and adjusting if necessary
@@ -765,7 +767,7 @@ def prepare_system(params):
     if tau_courant < tau:
         print("adjusting tau to courant condition")
         tau = tau_courant
-        params["constants"]["tau"] = tau
+        params["numerical"]["tau"] = tau
         print(f"new tau = {tau}")
     
     dir_name = f"logs/Te{T_e/eV}Nx{N_x}_Np{N_p}_h{h}_tau{tau}_n{n}"
@@ -855,14 +857,6 @@ def prepare_system(params):
     "pumping_windows": numerical["pumping_windows"]
     }
 
-    # serialized_bytes = pickle.dumps(params)
-
-    # with open(os.path.join(dir_name, "params.bin"), "ab+") as f:
-    #     f.seek(0, os.SEEK_END)
-    #     size_bytes = len(serialized_bytes).to_bytes(4, byteorder="big")
-    #     f.write(size_bytes)
-        # f.write(serialized_bytes)
-
     with open(os.path.join(dir_name, "params.bin"), 'ab+') as f:
         pickle.dump(params, f)
     
@@ -928,16 +922,10 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
         # Saving system state
         if saving and t % saving_period == 0:
             save_system_state(t, nodes, (electrons, ions), walls, system_states_path)
-
-        if "secondary_electrons" in see_dict:
-            save_system_state(t, nodes, (see_dict["secondary_electrons"]), walls, secondary_electrons_path, modes=["particles"])
-            see_dict.pop("secondary_electrons")
-        if "absorbed_electrons" in see_dict:
-            save_system_state(t, nodes, (see_dict["absorbed_electrons"]), walls, absorbed_electrons_path, modes=["particles"])
-            see_dict.pop("absorbed_electrons")
-        if "absorbed_ions" in see_dict:
-            save_system_state(t, nodes, (see_dict["absorbed_ions"]), walls, absorbed_ions_path, modes=["particles"])
-            see_dict.pop("absorbed_ions")
+        for kind in ["secondary_electrons", "absorbed_electrons", "absorbed_ions"]:
+            if kind in see_dict:
+                save_system_state(t, nodes, (see_dict[kind]), walls, secondary_electrons_path, modes=["particles"])
+                see_dict.pop(kind)
 
         # Applying Maxwellian distribution
         if maxwellise and t % maxwellise_period == 0:
