@@ -431,38 +431,36 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
                 particles.denormalise(SEE["h"], SEE["tau"])
                 energy = 0.5 * particles.m * particles.v ** 2
                 particles.normalise(SEE["h"], SEE["tau"])
-                emit_mask = energy > SEE["E1"]
-                absorbed_emit_mask = absorbed_mask & emit_mask
-                if np.sum(absorbed_emit_mask) > 0:
-                    SEE_success = True
-                    # Step 2: Calculate the secondary electron emission yield (σ)
-                    sigma = ((energy[absorbed_emit_mask]) / SEE["E1"]) ** SEE["alpha"]
-                    secondary_counts = np.floor(sigma).astype(int)
-                    # Step 3: Adding generated electrons to the system and ions to the wall
-                    probabilities = np.random.rand(len(sigma))
-                    secondary_counts += (probabilities < (np.floor(sigma)-sigma+1)).astype(int)
-                    total_secondary = np.sum(secondary_counts)
 
+                # Step 2: Calculate the secondary electron emission yield (σ)
+                sigma = ((energy[absorbed_mask]) / SEE["E1"]) ** SEE["alpha"]
+                secondary_counts = np.floor(sigma).astype(int)
+                # Step 3: Adding generated electrons to the system and ions to the wall
+                probabilities = np.random.rand(len(sigma))
+                secondary_counts += (probabilities < (np.floor(sigma)-sigma+1)).astype(int)
+                total_secondary = np.sum(secondary_counts)
+                if total_secondary > 0:
+                    SEE_success = True
                     new_electrons = Particles(total_secondary, *params)
                     new_coordinate = wall.right + 1 if wall.side == "left" else wall.left - 1
                     new_electrons.x = np.full(new_electrons.n_macro, new_coordinate)
                     new_electrons.normalised = True
                     set_distr(new_electrons, SEE["see_integral"], SEE["h"], SEE["tau"])
 
-                    SEE["secondary_electrons"] = new_electrons.deepcopy()
-                    
-                    #print("emittion")
-                    # print(new_electrons.x)
-                    # print(new_electrons.v)
-
-                    # positrons = Particles(total_secondary, *params)
-                    # positrons.q *= -1
-        
-                    # positrons.x = range_coordinates((wall.left, wall.right), np.ones(total_secondary))
-                    # positrons.v = np.zeros(positrons.n_macro)
-
-                    # wall.particles_lst.append(positrons)
                     wall.charge += abs(particles.q*total_secondary)*particles.concentration
+                    SEE["secondary_electrons"] = new_electrons.deepcopy()
+                
+                #print("emittion")
+                # print(new_electrons.x)
+                # print(new_electrons.v)
+
+                # positrons = Particles(total_secondary, *params)
+                # positrons.q *= -1
+    
+                # positrons.x = range_coordinates((wall.left, wall.right), np.ones(total_secondary))
+                # positrons.v = np.zeros(positrons.n_macro)
+
+                # wall.particles_lst.append(positrons)
 
             absorbed_particles = particles[absorbed_mask].deepcopy()
 
@@ -867,15 +865,13 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
     time_iterations = calc_dict['time_iterations']
     saving_period = calc_dict["periods"]['saving']
     pumping_period = calc_dict["periods"]['pumping']
+    pumping_offset = calc_dict["periods"]['pumping_offset']
     maxwellise_period = calc_dict["periods"]['maxwellise']
     saving = calc_dict["modes"]['saving']
     pumping = calc_dict["modes"]['pumping']
     maxwellise = calc_dict["modes"]['maxwellise']
 
     system_states_path = calc_dict["filenames"]['system_states']
-    secondary_electrons_path = calc_dict["filenames"]['secondary_electrons']
-    absorbed_electrons_path = calc_dict["filenames"]['absorbed_electrons']
-    absorbed_ions_path = calc_dict["filenames"]['absorbed_ions']
 
     n_range = calc_dict['n_range']
     A_e = calc_dict['A_e']
@@ -924,7 +920,7 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
             save_system_state(t, nodes, (electrons, ions), walls, system_states_path)
         for kind in ["secondary_electrons", "absorbed_electrons", "absorbed_ions"]:
             if kind in see_dict:
-                save_system_state(t, nodes, (see_dict[kind]), walls, secondary_electrons_path, modes=["particles"])
+                save_system_state(t, nodes, (see_dict[kind]), walls, calc_dict["filenames"][kind], modes=["particles"])
                 see_dict.pop(kind)
 
         # Applying Maxwellian distribution
@@ -932,5 +928,5 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
             set_distr(electrons, e_integral, h, tau, n_range)
 
         # Pumping particles
-        if pumping and t % pumping_period == 0 and t != 0:
+        if pumping and t % pumping_period == 0 and t > pumping_offset:
             pump_particles((electrons, ions), constant_n, n_range, windows=pumping_windows)
