@@ -329,14 +329,14 @@ def pump_particles(particles_lst, constant_n, n_range, windows=1):
     """
     len_range = n_range[1] - n_range[0]
     
-    if len_range % windows != 0:
-        raise ValueError("The length of the neutral area must be divisible by \
-                         the number of windows without a remainder")
-    window = len_range/windows
+    # if len_range % windows != 0:
+    #     raise ValueError("The length of the neutral area must be divisible by \
+    #                      the number of windows without a remainder")
+    window = len_range//windows
     left = right = 0
     for i in range(windows):
         left = n_range[0] + window*i
-        right = left + window
+        right = left + window if left + window < n_range[1] else n_range[1]
         window_range = (left, right)
         N = 0
         for particles in particles_lst:
@@ -750,7 +750,6 @@ def prepare_system(params):
                          h = {h}\n\
                          r_d = {r_d}")
         
-
     # Calculating the plasma time step size and adjusting if necessary
     tau_plasma = 1 / (math.sqrt(n0 * q * q / (m_e * epsilon)) / (2 * np.pi))
     oscill_factor = numerical["oscill_factor"]
@@ -815,12 +814,19 @@ def prepare_system(params):
     # Accelerating electrons and ions based on the electric field
     accel(electrons, nodes, A_e, zerostep=True)
     accel(ions, nodes, A_i, zerostep=True)
-
+    if "neutral range" in geometry:
+        neutral_range = geometry["neutral_range"]
+    else:
+        debye_cells = r_d/h
+        offset = v_t_e*tau*periods["pumping"]
+        neutral_range = [left_wall.right + debye_cells*6, right_wall.left - debye_cells*6]
+        neutral_range[0] += offset
+        neutral_range[1] -= offset
     #computing constant for pumping
     constant_n = 0
     for particles in (electrons, ions):
         w_left = int(N_x/2)
-        neutral_width = geometry["neutral_range"][1] - geometry["neutral_range"][0]
+        neutral_width = neutral_range[1] - neutral_range[0]
         w_right = w_left + int(neutral_width/pumping_windows)
         mask = range_mask(particles, (w_left, w_right))
         slc = particles[mask]
@@ -842,7 +848,7 @@ def prepare_system(params):
     'time_iterations': n,
     "periods": periods,
     "modes": modes,
-    'n_range': geometry["neutral_range"],
+    'n_range': neutral_range,
     'A_e': A_e,
     'A_i': A_i,
     'see_dict': see_dict,
