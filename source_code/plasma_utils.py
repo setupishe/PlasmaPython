@@ -332,7 +332,7 @@ def pump_particles(particles_lst, constant_n, n_range, windows=1):
     # if len_range % windows != 0:
     #     raise ValueError("The length of the neutral area must be divisible by \
     #                      the number of windows without a remainder")
-    window = len_range//windows
+    window = len_range/windows
     left = right = 0
     for i in range(windows):
         left = n_range[0] + window*i
@@ -814,7 +814,7 @@ def prepare_system(params):
     # Accelerating electrons and ions based on the electric field
     accel(electrons, nodes, A_e, zerostep=True)
     accel(ions, nodes, A_i, zerostep=True)
-    if "neutral range" in geometry:
+    if "neutral_range" in geometry:
         neutral_range = geometry["neutral_range"]
     else:
         debye_cells = r_d/h
