@@ -336,7 +336,7 @@ def pump_particles(particles_lst, constant_n, n_range, windows=1):
     left = right = 0
     for i in range(windows):
         left = n_range[0] + window*i
-        right = left + window if left + window < n_range[1] else n_range[1]
+        right = left + window# if left + window < n_range[1] else n_range[1]
         window_range = (left, right)
         N = 0
         for particles in particles_lst:
@@ -437,7 +437,7 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
                 secondary_counts = np.floor(sigma).astype(int)
                 # Step 3: Adding generated electrons to the system and ions to the wall
                 probabilities = np.random.rand(len(sigma))
-                secondary_counts += (probabilities < (np.floor(sigma)-sigma+1)).astype(int)
+                secondary_counts += (probabilities < (sigma - np.floor(sigma))).astype(int)
                 total_secondary = np.sum(secondary_counts)
                 if total_secondary > 0:
                     SEE_success = True
@@ -831,6 +831,7 @@ def prepare_system(params):
         mask = range_mask(particles, (w_left, w_right))
         slc = particles[mask]
         constant_n += slc.n_macro
+    print(constant_n)
     #deleting log file if exists
     statespath = filenames["system_states"]
     if os.path.isfile(statespath):
