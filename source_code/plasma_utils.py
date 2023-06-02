@@ -433,7 +433,11 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
                 particles.normalise(SEE["h"], SEE["tau"])
 
                 # Step 2: Calculate the secondary electron emission yield (σ)
-                sigma = ((energy[absorbed_mask]) / SEE["E1"]) ** SEE["alpha"]
+                if SEE["alpha"] is not None:
+                    sigma = ((energy[absorbed_mask]) / SEE["E1"]) ** SEE["alpha"]
+                else:
+                    sigma = 0.5 + (energy[absorbed_mask]) / SEE["E1"]/2
+
                 secondary_counts = np.floor(sigma).astype(int)
                 # Step 3: Adding generated electrons to the system and ions to the wall
                 probabilities = np.random.rand(len(sigma))
@@ -761,6 +765,7 @@ def prepare_system(params):
 
     # Calculating the Courant time step size and adjusting if necessary
     tau_courant = numerical['courant_factor'] * h / v_t_e
+
     if tau_courant < tau:
         print("adjusting tau to courant condition")
         tau = tau_courant
@@ -772,6 +777,7 @@ def prepare_system(params):
         now = datetime.now()
         formatted_now = now.strftime("%d_%m_%Y_%H_%M_%S")
         dir_name += "_" + formatted_now
+
     force_mkdir(dir_name)
     for key in filenames:
         filenames[key] = os.path.join(dir_name, filenames[key])
@@ -814,14 +820,28 @@ def prepare_system(params):
     # Accelerating electrons and ions based on the electric field
     accel(electrons, nodes, A_e, zerostep=True)
     accel(ions, nodes, A_i, zerostep=True)
-    if "neutral_range" in geometry:
-        neutral_range = geometry["neutral_range"]
-    else:
-        debye_cells = r_d/h
-        offset = v_t_e*tau*periods["pumping"]
-        neutral_range = [left_wall.right + debye_cells*6, right_wall.left - debye_cells*6]
-        neutral_range[0] += offset
-        neutral_range[1] -= offset
+
+    debye_cells = r_d/h
+    offset = (v_t_e*tau/h)*periods["pumping"]
+    max_range = [left_wall.right + debye_cells*6, right_wall.left - debye_cells*6]
+    (max_range)
+    max_range[0] += offset
+    max_range[1] -= offset
+
+    neutral_range = geometry["neutral_range"]
+    if neutral_range[0] < max_range[0] or neutral_range[1] > max_range[1]:
+        print("neutral range too wide!")
+        print(f"neutral range: {neutral_range}")
+        print(f"maximum range: {max_range}")
+        print("adjusting...")
+
+        max_width = max_range[1] - max_range[0]
+        int_width = max_width - max_width%pumping_windows
+        center = N_x/2
+        neutral_range = (center-int_width/2, center+int_width/2)
+        print(f"adjusted neutral_range: {neutral_range}")
+
+
     #computing constant for pumping
     constant_n = 0
     for particles in (electrons, ions):
