@@ -8,6 +8,8 @@ import os
 from tqdm import tqdm
 import shutil
 from datetime import datetime
+from numba import njit, jit, f8
+
 
 
 def is_diagonally_dominant(x: np.array) -> bool:
@@ -27,6 +29,27 @@ def is_diagonally_dominant(x: np.array) -> bool:
     
     return (np.all(first_condition) and np.any(second_condition))
 
+@jit(f8[:] (f8[:],f8[:],f8[:],f8[:] ))
+def TDMAsolver(a, b, c, d):
+    '''
+    TDMA solver, a b c d can be NumPy array type or Python list type.
+    refer to http://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm
+    and to http://www.cfd-online.com/Wiki/Tridiagonal_matrix_algorithm_-_TDMA_(Thomas_algorithm)
+    '''
+    nf = len(d) # number of equations
+    ac, bc, cc, dc = map(np.array, (a, b, c, d)) # copy arrays
+    for it in range(1, nf):
+        mc = ac[it-1]/bc[it-1]
+        bc[it] = bc[it] - mc*cc[it-1] 
+        dc[it] = dc[it] - mc*dc[it-1]
+        	    
+    xc = bc
+    xc[-1] = dc[-1]/bc[-1]
+
+    for il in range(nf-2, -1, -1):
+        xc[il] = (dc[il]-cc[il]*xc[il+1])/bc[il]
+
+    return xc
 
 def thomas_algorithm(A: np.array, d: np.array) -> np.array:
     '''
@@ -48,25 +71,7 @@ def thomas_algorithm(A: np.array, d: np.array) -> np.array:
     else:
         a, b, c = A[:, 0], A[:, 1], A[:, 2] 
         
-    n = A.shape[0]
-
-    p = np.zeros(n-1)
-    q = np.zeros(n-1)
-    x = np.zeros(n)
-
-    #forward pass:
-    p[0] = -c[0]/b[0]
-    q[0] = d[0]/b[0]
-
-    for i in range(1, n-1):
-        p[i] = -c[i]/(a[i]*p[i-1]+b[i])
-        q[i] = (d[i]-a[i]*q[i-1])/(a[i]*p[i-1]+b[i])
-    
-    #backward pass:
-    x[n-1] = (d[n-1]-a[n-1]*q[n-2])/(a[n-1]*p[n-2]+b[n-1])
-    for i in range(n-2, -1, -1):
-        x[i] = x[i+1]*p[i]+q[i]
-    return x
+    return TDMAsolver(a, b, c, d)
 
 
 def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None) -> None:
@@ -127,13 +132,14 @@ def calc_fields(nodes: Nodes, h: float, eps: float, periodic = False, walls=None
     for i in range(1, nodes.length-1):
         nodes.E[i] = -(nodes.phi[i+1]-nodes.phi[i-1])/(2*h)
 
+@njit
 def weight_field_value(x: np.array, value_field: np.array):
     """
     Gets field value for particle's position using first-order weighting
     x: particle's position
     value_field: nodes array of field values: rho, phi etc.
     """
-    x_j = np.floor(x).astype(int)
+    x_j = np.floor(x).astype(np.int64)
     x_jplus1 = x_j + 1
     left = (x_jplus1 - x)*value_field[x_j]
     right = (x - x_j)*value_field[x_jplus1]
@@ -199,27 +205,43 @@ def get_rho(nodes: Nodes, particles, periodic=False):
     particles_tpl: set or tuple of sets of physical macroparticles
     periodic: defines boundary conditions
     """
-    conc = np.zeros(nodes.length, dtype=np.double)
+    length = nodes.length
+    coordinates = particles.x
+    conc = calc_conc(length, coordinates, particles.concentration, periodic=periodic)
 
-    x_j = np.floor(particles.x).astype(int)
-    x_jplus1 = x_j + 1
-
-    left = particles.concentration * (x_jplus1 - particles.x)
-    right = particles.concentration * (particles.x - x_j)
-    np.add.at(conc, x_j, left)
-    np.add.at(conc, x_jplus1, right)
-    #TODO: fix 
-    if periodic:
-        if np.any(x_j == 0):
-            conc[0] += np.sum(left[x_j == 0])
-        if np.any(x_jplus1 == nodes.length - 1):
-            conc[nodes.length - 1] += np.sum(right[x_jplus1 == nodes.length - 1])
     if particles.q > 0:
         nodes.conc_i += conc
     else:
         nodes.conc_e += conc
-    rho = conc * particles.q
-    np.copyto(nodes.rho, nodes.rho + rho, where=rho != 0)
+
+
+    nodes.rho += conc*particles.q
+
+@njit
+def calc_conc(length, coordinates, particles_conc,  periodic=False):
+    """
+    Obtains rho value in the nodes using 1-order weighting
+    params:
+    nodes: spatial grid of nodes
+    particles_tpl: set or tuple of sets of physical macroparticles
+    periodic: defines boundary conditions
+    """
+    conc = np.zeros(length, dtype=np.double)
+
+    x_j = np.trunc(coordinates).astype(np.int64)
+    x_jplus1 = x_j + 1
+
+    for i in range(len(coordinates)):
+        left_idx = x_j[i]
+        right_idx = x_j[i] + 1
+
+        conc[left_idx] += particles_conc * (right_idx - coordinates[i])
+        conc[right_idx] += particles_conc * (coordinates[i] - left_idx)
+    #TODO: fix 
+    if periodic:
+        pass
+    
+    return conc
 
 
 def set_homogeneous(particles: Particles, left: float, right: float):
@@ -298,7 +320,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
     n_range: determine if particles should be modified within the range
     """
     
-    mask = np.ones(particles.n_macro)
+    mask = np.ones(particles.n_macro, dtype=bool)
 
     if n_range is not None:
         mask = range_mask(particles, n_range)
@@ -313,7 +335,6 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
             if ind == len(probs_keys):
                 ind = -1
             key = probs_keys[ind]
-            sign = 1 if particles.v[i] >= 0 else -1
             #particles.v[i] = abs(integral_dict[key])*sign
             particles.v[i] = integral_dict[key]
 
@@ -473,15 +494,15 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
             SEE[name] = absorbed_particles
 
             if injection is not None and particles.q > 0:
-            
-                particles.x[absorbed_mask] = range_coordinates(injection["n_range"], absorbed_mask)
-                set_distr(particles, injection["i_integral"], injection["h"], injection["tau"], injection["n_range"])
+                #ions
+                particles.x[absorbed_mask] = range_coordinates(injection["neutral_range"], absorbed_mask)
+                set_distr(particles, injection["i_integral"], injection["h"], injection["tau"], injection["neutral_range"])
 
                 #electrons
                 paired_electrons = particles[absorbed_mask].deepcopy()
                 paired_electrons.q *= -1
-                paired_electrons.m = injection["electrons"].m
-                set_distr(paired_electrons, injection["e_integral"], injection["h"], injection["tau"], injection["n_range"])
+                paired_electrons.m = particles_lst[0].m
+                set_distr(paired_electrons, injection["e_integral"], injection["h"], injection["tau"], injection["neutral_range"])
 
                 particles_lst[0].add(paired_electrons)
 
@@ -702,6 +723,9 @@ def force_mkdir(dir):
     os.mkdir(dir)
 
 def prepare_system(params):
+    
+    
+
     constants = params['constants']
     numerical = params['numerical']
     geometry = params['geometry']
@@ -709,6 +733,9 @@ def prepare_system(params):
     modes = params['modes']
     filenames = params['filenames']
 
+    if modes["injection"] and modes["pumping"]:
+        raise ValueError("Error! Injection and pumping can't both be active on the same run")
+    
     L = geometry['L']
     N_x = numerical['N_x']
     N_p = numerical['N_p']
@@ -864,6 +891,17 @@ def prepare_system(params):
                 "tau": tau, 
                 "see_integral": see_integral
     }
+    if modes["injection"]:
+
+        injection_dict = {"i_integral": i_integral,
+                    "h": h,
+                    "tau": tau,
+                    "neutral_range": neutral_range,
+                    "e_integral": e_integral,
+                    "i_integral": i_integral,
+        }
+    else:
+        injection_dict = None
 
     calc_dict = {
     'time_iterations': n,
@@ -873,12 +911,14 @@ def prepare_system(params):
     'A_e': A_e,
     'A_i': A_i,
     'see_dict': see_dict,
+    'injection_dict': injection_dict,
     'filenames': filenames,
     'constant_n': constant_n,
     'h': h,
     'tau': tau,
     'epsilon': epsilon,
     'e_integral': e_integral,
+    'i_integral': i_integral,
     "pumping_windows": numerical["pumping_windows"]
     }
 
@@ -899,7 +939,7 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
     maxwellise = calc_dict["modes"]['maxwellise']
 
     system_states_path = calc_dict["filenames"]['system_states']
-
+    
     n_range = calc_dict['n_range']
     A_e = calc_dict['A_e']
     A_i = calc_dict['A_i']
@@ -907,10 +947,12 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
     
     constant_n = calc_dict['constant_n']
     see_dict = calc_dict['see_dict']
+    injection_dict = calc_dict['injection_dict']
     h = calc_dict['h']
     tau = calc_dict['tau']
     epsilon = calc_dict['epsilon']
     e_integral = calc_dict['e_integral']
+    i_integral = calc_dict['i_integral']
     pumping_windows = calc_dict["pumping_windows"]
 
     print(f"h = {h}, tau = {tau}")
@@ -929,7 +971,7 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
         nodes.conc_e *= 0
 
         # Accounting for wall interactions
-        account_walls([electrons, ions], walls, SEE=see_dict)
+        account_walls([electrons, ions], walls, SEE=see_dict, injection=injection_dict)
 
         # Calculating charge densities
         get_rho(nodes, electrons)
@@ -953,7 +995,9 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
         # Applying Maxwellian distribution
         if maxwellise and t % maxwellise_period == 0:
             set_distr(electrons, e_integral, h, tau, n_range)
+            #set_distr(ions, i_integral, h, tau, n_range)
 
         # Pumping particles
         if pumping and t % pumping_period == 0 and t > pumping_offset:
             pump_particles((electrons, ions), constant_n, n_range, windows=pumping_windows)
+
