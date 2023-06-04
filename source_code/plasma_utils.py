@@ -340,7 +340,7 @@ def set_distr(particles: Particles, integral_dict, h, tau, n_range = None):
 
     particles.normalise(h, tau)
 
-def pump_particles(particles_lst, constant_n, n_range, windows=1):
+def pump_particles(particles_lst, n_range, constant_n=None, windows=1):
     """
     particles: sets of macroparticles
     inregral_dict: precalculated set of velocities
@@ -467,11 +467,15 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
                 if total_secondary > 0:
                     SEE_success = True
                     new_electrons = Particles(total_secondary, *params)
-                    new_coordinate = wall.right + 1 if wall.side == "left" else wall.left - 1
+                    new_coordinate = wall.right + 0.01 if wall.side == "left" else wall.left - 0.01
                     new_electrons.x = np.full(new_electrons.n_macro, new_coordinate)
                     new_electrons.normalised = True
                     set_distr(new_electrons, SEE["see_integral"], SEE["h"], SEE["tau"])
 
+                    new_electrons.v = np.abs(new_electrons.v)
+                    if wall.side == "right":
+                        new_electrons.v *= -1
+                        
                     wall.charge += abs(particles.q*total_secondary)*particles.concentration
                     SEE["secondary_electrons"] = new_electrons.deepcopy()
                 
@@ -958,12 +962,8 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
     print(f"h = {h}, tau = {tau}")
     print("Launching calculations...")
     for t in tqdm(range(time_iterations)):
-        try:
-            move(electrons, nodes)
-            move(ions, nodes)
-        except Exception:
-            print("Number of iteration:", t)
-            break
+        move(electrons, nodes)
+        move(ions, nodes)
 
         # Resetting charge densities
         nodes.rho *= 0
@@ -999,5 +999,17 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
 
         # Pumping particles
         if pumping and t % pumping_period == 0 and t > pumping_offset:
-            pump_particles((electrons, ions), constant_n, n_range, windows=pumping_windows)
+            pump_particles((electrons, ions), n_range, constant_n = constant_n, windows=pumping_windows)
+
+        # if t % pumping_period == 0 and t > 0:
+        #     for particles in (electrons, ions):
+        #         new_particles = Particles(10, particles.concentration,
+        #                                 particles.q, particles.m)
+        #         new_particles.normalised = particles.normalised
+        #         new_particles.x = range_coordinates(n_range, np.ones(10))
+        #         if particles.q > 0:
+        #             set_distr(new_particles, i_integral, h, tau)
+        #         else: 
+        #             set_distr(new_particles, e_integral, h, tau)
+        #         particles.add(new_particles)
 
