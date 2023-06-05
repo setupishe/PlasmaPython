@@ -777,6 +777,12 @@ def prepare_system(params):
     vmin_i = -3 * v_t_i                        # Minimum ion velocity
     vmax_i = 3 * v_t_i                         # Maximum ion velocity
 
+    T_see = 1*eV
+    m_see = m_e
+    v_t_see = math.sqrt(3 * k_b * T_see / m_see)     # Thermal velocity of ions
+    vmin_see = -3 * v_t_see                        # Minimum ion velocity
+    vmax_see = 3 * v_t_see                         # Maximum ion velocity
+
     # Calculating the Debye length and adjusting grid spacing if necessary
     r_d = math.sqrt(epsilon * k_b * T_e / (q * q * n0))
     debye_factor = numerical["debye_factor"]
@@ -835,7 +841,7 @@ def prepare_system(params):
     integral_points = numerical["integral_points"]
     e_integral = get_integral(Maxwell(T_e, k_b, m_e), vmin_e, vmax_e, integral_points)
     i_integral = get_integral(Maxwell(T_i, k_b, m_i), vmin_i, vmax_i, integral_points)
-    see_integral = get_integral(Maxwell(1*eV, k_b, m_e), vmin_e, vmax_e, integral_points)
+    see_integral = get_integral(Maxwell(1*eV, k_b, m_e), vmin_see, vmax_see, integral_points)
 
     # Setting electron and ion distributions based on calculated integrals
     set_distr(electrons, e_integral, h, tau)
