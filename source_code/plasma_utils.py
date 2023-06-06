@@ -477,7 +477,11 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
                         new_electrons.v *= -1
                         
                     wall.charge += abs(particles.q*total_secondary)*particles.concentration
-                    SEE["secondary_electrons"] = new_electrons.deepcopy()
+                    if "secondary_electrons" not in SEE:
+                        SEE["secondary_electrons"] = new_electrons.deepcopy()
+                    else:
+                        SEE["secondary_electrons"].add(new_electrons.deepcopy())
+
                 
                 #print("emittion")
                 # print(new_electrons.x)
@@ -495,7 +499,11 @@ def account_walls(particles_lst: Particles, walls: list[Wall], SEE=None, injecti
 
             sort = "ions" if particles.q > 0 else "electrons"
             name = "absorbed_" + sort
-            SEE[name] = absorbed_particles
+            if name not in SEE:
+                SEE[name] = absorbed_particles
+            else:
+                SEE[name].add(absorbed_particles)
+
 
             if injection is not None and particles.q > 0:
                 #ions
@@ -779,9 +787,9 @@ def prepare_system(params):
 
     T_see = 1*eV
     m_see = m_e
-    v_t_see = math.sqrt(3 * k_b * T_see / m_see)     # Thermal velocity of ions
-    vmin_see = -3 * v_t_see                        # Minimum ion velocity
-    vmax_see = 3 * v_t_see                         # Maximum ion velocity
+    v_t_see = math.sqrt(3 * k_b * T_see / m_see)     # Thermal velocity of secondary electrons
+    vmin_see = -3 * v_t_see                        # Minimum secondary electron velocity
+    vmax_see = 3 * v_t_see                         # Maximum secondary electron velocity
 
     # Calculating the Debye length and adjusting grid spacing if necessary
     r_d = math.sqrt(epsilon * k_b * T_e / (q * q * n0))
@@ -861,7 +869,6 @@ def prepare_system(params):
     debye_cells = r_d/h
     offset = (v_t_e*tau/h)*periods["pumping"]
     max_range = [left_wall.right + debye_cells*6, right_wall.left - debye_cells*6]
-    (max_range)
     max_range[0] += offset
     max_range[1] -= offset
 
@@ -903,7 +910,7 @@ def prepare_system(params):
     }
     if modes["injection"]:
 
-        injection_dict = {"i_integral": i_integral,
+        injection_dict = {
                     "h": h,
                     "tau": tau,
                     "neutral_range": neutral_range,
@@ -1005,7 +1012,7 @@ def main_cycle(electrons, ions, nodes, walls, calc_dict):
 
         # Pumping particles
         if pumping and t % pumping_period == 0 and t > pumping_offset:
-            pump_particles((electrons, ions), n_range, constant_n = constant_n, windows=pumping_windows)
+            pump_particles((electrons, ions), n_range, constant_n=constant_n, windows=pumping_windows)
 
         # if t % pumping_period == 0 and t > 0:
         #     for particles in (electrons, ions):
